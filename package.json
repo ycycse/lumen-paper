@@ -1,0 +1,57 @@
+{
+  "name": "lumen-paper",
+  "private": true,
+  "version": "0.1.17",
+  "description": "A calm, evidence-anchored AI reader for research PDFs in Chrome.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ycycse/lumen-paper.git"
+  },
+  "homepage": "https://github.com/ycycse/lumen-paper#readme",
+  "bugs": {
+    "url": "https://github.com/ycycse/lumen-paper/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "chrome-extension",
+    "pdf",
+    "research",
+    "paper-reader",
+    "codex"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "check": "tsc -b --pretty false",
+    "smoke": "npm run build && node scripts/smoke-extension.mjs",
+    "bridge": "node bridge/server.mjs",
+    "bridge:agent": "node bridge/server.mjs --allow-agent",
+    "bridge:full": "node bridge/server.mjs --allow-agent --allow-unrestricted",
+    "notices": "node scripts/generate-third-party-notices.mjs",
+    "package": "npm run build && npm run notices && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10"
+  }
+}
