@@ -7,6 +7,7 @@ Lumen Paper does not include analytics, advertising, or a Lumen-operated cloud s
 - PDF rendering, text extraction, highlights, notes, reading preferences, prompt settings, and optional chat history are processed or stored locally in Chrome.
 - API keys and Bridge pairing tokens are stored in `chrome.storage.local`. They are not synced by Lumen, but they are not protected by the operating-system keychain.
 - The Codex Bridge listens only on `127.0.0.1` and leaves Codex authentication to the locally installed Codex CLI.
+- The standalone Bridge keeps its matching token in a user-only state directory with `0600` file permissions, so upgrades do not require a new pairing token.
 
 ## What can leave the browser
 

@@ -65,6 +65,8 @@ if (!smokePdf) {
 const pdfPath = resolve(smokePdf);
 const profileDir = mkdtempSync(`${tmpdir()}/lumen-chrome-`);
 const screenshotPath = resolve("work/smoke-reader.png");
+const focusScreenshotPath = resolve("work/smoke-focus-mode.png");
+const notesScreenshotPath = resolve("work/smoke-highlights.png");
 const smokeAnswer = [
   "## 核心判断",
   "",
@@ -212,19 +214,18 @@ try {
     throw new Error(`Incomplete reader render: ${JSON.stringify(metrics)}`);
   }
 
-  const focusMode = await cdp.evaluate(`(() => {
-    document.querySelector('.focus-toggle')?.click();
-    const entered = document.querySelector('.reader-app')?.classList.contains('focus-mode');
-    const panelHidden = !document.querySelector('.insight-panel');
-    const exitVisible = getComputedStyle(document.querySelector('.focus-exit-button')).display !== 'none';
-    document.querySelector('.focus-exit-button')?.click();
-    return new Promise((resolvePromise) => requestAnimationFrame(() => resolvePromise({
-      entered,
-      panelHidden,
-      exitVisible,
-      restored: Boolean(document.querySelector('.insight-panel')),
-    })));
-  })()`);
+  await cdp.evaluate(`document.querySelector('.focus-toggle')?.click()`);
+  await waitFor(async () => Boolean(await cdp.evaluate(`document.querySelector('.reader-app')?.classList.contains('focus-mode')`)), 5_000, "focus mode");
+  const focusModeActive = await cdp.evaluate(`({
+    entered: document.querySelector('.reader-app')?.classList.contains('focus-mode'),
+    panelHidden: !document.querySelector('.insight-panel'),
+    exitVisible: getComputedStyle(document.querySelector('.focus-exit-button')).display !== 'none'
+  })`);
+  const focusCapture = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  writeFileSync(focusScreenshotPath, Buffer.from(focusCapture.data, "base64"));
+  await cdp.evaluate(`document.querySelector('.focus-exit-button')?.click()`);
+  await waitFor(async () => !(await cdp.evaluate(`document.querySelector('.reader-app')?.classList.contains('focus-mode')`)), 5_000, "focus mode restore");
+  const focusMode = { ...focusModeActive, restored: await cdp.evaluate(`Boolean(document.querySelector('.insight-panel'))`) };
   if (!focusMode.entered || !focusMode.panelHidden || !focusMode.exitVisible || !focusMode.restored) {
     throw new Error(`Focus mode failed: ${JSON.stringify(focusMode)}`);
   }
@@ -355,6 +356,18 @@ try {
   await cdp.evaluate(`document.querySelectorAll('.panel-tabs button')[2]?.click()`);
   await waitFor(async () => Number(await cdp.evaluate(`document.querySelectorAll('.note-card').length`)) > 0, 5_000, "notes tab after highlight");
   metrics.notesTab = await cdp.evaluate(`document.querySelector('.notes-panel h2')?.textContent`);
+  await cdp.evaluate(`(() => {
+    getSelection()?.removeAllRanges();
+    document.querySelector('.selection-popover .popover-close')?.click();
+    const handle = document.querySelector('.panel-resize-handle');
+    handle?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    for (let index = 0; index < 3; index += 1) {
+      handle?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    }
+  })()`);
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+  const notesCapture = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  writeFileSync(notesScreenshotPath, Buffer.from(notesCapture.data, "base64"));
 
   await cdp.evaluate(`document.querySelectorAll('.panel-tabs button')[1]?.click()`);
   await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.composer textarea'))`)), 5_000, "chat composer");
@@ -419,6 +432,17 @@ try {
   await waitFor(async () => (await cdp.evaluate(`document.querySelector('.provider-chip-label')?.textContent`)) === 'API', 5_000, "API provider switch");
   if (metrics.providerSwitch !== 'codex') throw new Error(`Provider switch was not persisted: ${metrics.providerSwitch}`);
   metrics.mimeHandlerMode = mimeMode;
+  await cdp.evaluate(`document.querySelector('.font-chip')?.click()`);
+  await waitFor(async () => Number(await cdp.evaluate(`document.querySelectorAll('.font-size-options button').length`)) === 4, 5_000, "README screenshot font reset");
+  await cdp.evaluate(`(() => {
+    document.querySelectorAll('.font-size-options button')[1]?.click();
+    const handle = document.querySelector('.panel-resize-handle');
+    handle?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    for (let index = 0; index < 3; index += 1) {
+      handle?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    }
+  })()`);
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
   const capture = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   writeFileSync(screenshotPath, Buffer.from(capture.data, "base64"));
 
@@ -464,7 +488,7 @@ try {
   const promptStudioCapture = await optionsCdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   writeFileSync(promptStudioScreenshotPath, Buffer.from(promptStudioCapture.data, "base64"));
   optionsCdp.close();
-  process.stdout.write(`${JSON.stringify({ extensionId, pdf: basename(pdfPath), metrics, screenshotPath, optionsScreenshotPath, promptStudioScreenshotPath }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ extensionId, pdf: basename(pdfPath), metrics, screenshotPath, focusScreenshotPath, notesScreenshotPath, optionsScreenshotPath, promptStudioScreenshotPath }, null, 2)}\n`);
   cdp.close();
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.stack : error}\n${chromeErrors.slice(-5000)}\n`);

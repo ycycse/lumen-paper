@@ -1,53 +1,83 @@
-# Lumen Paper
+<p align="center">
+  <img src="public/icons/icon-128.png" width="76" alt="Lumen Paper icon">
+</p>
 
-当前版本：**v0.1.17**。阅读器使用轻量专注模式、温暖纸张视觉与针对中英混排重新校准的阅读排版；交流默认使用“研究模式”，当前论文只是可选上下文。Prompt Studio 完整展示并允许修改 Lumen/Bridge 添加的 10 组 prompt；Codex 交流可选择 Reader、Agent 或显式解锁的 Full Agent 权限。
+<h1 align="center">Lumen Paper</h1>
 
-一个安静的 Chrome AI 论文阅读器：PDF 是主角，AI 待在页边。参考 Sider 的随手问答和 Moonlight 的论文专用导航，但把交互收敛成三个低负担动作：**打开即解读、划线即追问、回答必回原文页码**。
+<p align="center">
+  一个 local-first、可自带模型的开源 Chrome PDF 阅读器。
+</p>
 
-![Lumen reader](docs/lumen-reader.png)
+<p align="center">
+  在 PDF 旁生成结构化解读，围绕选区提问、划线和记录笔记，并通过页码引用回到原文。
+</p>
 
-## 已实现
+<p align="center">
+  <a href="https://github.com/ycycse/lumen-paper/releases/latest"><strong>下载最新版本</strong></a>
+  · <a href="#安装">安装</a>
+  · <a href="#codex-bridge">Codex Bridge</a>
+  · <a href="https://github.com/ycycse/lumen-paper/issues">Issues</a>
+</p>
 
-- 打开 PDF 自动进入 Lumen：Chrome 150 走 `webRequest` fallback，Chrome 151+ 使用原生 `mime_types_handler`。
-- PDF.js 本地解析、canvas 渲染和可选择 text layer。
-- 顶部「专注」按钮或 `F` 键可暂时收起 AI 与次要控件，只保留论文标题、页码进度和退出入口；`Esc` 退出并恢复原侧栏状态。
-- 阅读舞台采用低刺激暖灰、暖白纸张和柔和实体阴影；AI 长回答限制舒适行宽，宽侧栏不再把一行拉满整屏。
-- AI 正文默认采用一致的系统字体 metrics，约 16.5px；正文宽度会随侧栏拖动连续变化。`Aa` 菜单提供舒适、宽屏与铺满三档内容宽度，铺满模式只保留约 16px 安全边距。
-- `Aa` 可在系统、书卷与自定义本机字体之间切换；自定义字体名与选择保存在本地，字体未安装或留空时自动回退到系统字体，且不会改变 PDF 原文渲染。
-- 尊重系统的“减少动态效果”设置，自动关闭加载 shimmer、跳点和页码定位动画。
-- 自动生成 Paper Brief：verdict、贡献、机制、证据账本、局限、最短阅读路径。
-- 解读栏可拖动左边界自由加宽，宽度会保留；双击边界恢复默认宽度。
-- 浏览器 Tab 保留论文标题；顶部常驻显示当前 `Codex Plan / API`，可直接切换推理入口。
-- 图标使用“论文页边 + evidence highlight”语义，不再采用容易撞脸通用 AI 品牌的字母与星芒组合。
-- 自动接管前读取当前标签页 favicon 并传入阅读器；获取不到时使用论文来源站 favicon，Lumen 图标只作为最终兜底。
-- PDF 文档解析完成后立即显示；只渲染视口附近页面，全文文字索引在后台逐页建立，不再阻塞阅读界面。
-- 网络 PDF 字节与文字索引缓存在扩展 IndexedDB（最多 4 篇、7 天）；刷新优先恢复缓存，并为远程读取设置 60 秒超时。
-- 顶部 `Aa` 提供紧凑、标准、舒适、大字四档字号；AI 回复以阅读卡片渲染标题、列表、引用、代码和表格。
-- `Aa` 还提供连续 `− / +` 调节；PDF 的 `+` 不再封顶 180%，侧栏可一直拖到视窗仅剩 48px。
-- 选中文字后直接：解释、翻译、reviewer challenge、四种颜色划线。
-- 回答使用 `[[p:N]]` 原文锚点，点击可回到 PDF 页。
-- 设置页可直接修改 Paper Brief 的解读偏好并一键恢复默认；JSON、grounding 和页码输出约束仍由 Lumen 固定保留。
-- 本地保存每篇论文的摘要、划线、页边笔记和可选对话历史。
-- 自定义 OpenAI-compatible Chat Completions API。
-- Codex Plan 模式：通过本机 Codex CLI bridge 复用 ChatGPT 登录，不向扩展暴露 Codex token。
-- API 模式从 endpoint 对应的 `/models` 动态读取模型；Codex 模式通过 Bridge 查询当前账号实际可用的 Codex 模型，失败时仍允许手动输入。
-- Paper Brief 与交流/划线问答拥有独立模型设置；旧版单模型配置首次读取时会无损复制到两个用途。
-- Codex 可按设置调用第一方 Web search 与自包含计算命令；Bridge 使用 `codex exec --json` 解析真实工具事件，回答中显示 `Web search ×N / 计算验证 ×N`，不是由模型自报。
-- Codex bridge 会复用相同的并发请求；不同 PDF / 不同问题各自启动独立的 `codex exec` 子进程并行处理。
-- 交流栏可随时切换“论文 / 研究”语境；研究模式只在问题确实涉及当前论文时附上相关页段，因此可以自然讨论 Kimi、新论文、外部相关工作或一般技术问题。
-- Prompt Studio 展示论文 system prompt、研究 system prompt、Paper Brief、普通聊天、三种划线动作、Codex runtime 与连接测试的完整模板；所有字段可逐项编辑、置空和恢复默认。
-- Codex 权限明确分为 Reader（read-only）、Agent（workspace-write，加载用户 config/rules/skills/MCP）与 Full Agent（无 sandbox/审批）。每条回答显示实际 runtime receipt。
+<p align="center">
+  <a href="https://github.com/ycycse/lumen-paper/actions/workflows/ci.yml"><img src="https://github.com/ycycse/lumen-paper/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-879b46?style=flat-square" alt="MIT License"></a>
+</p>
 
-## 下载 Release 安装
+Lumen Paper 替代 Chrome 默认 PDF 页面，在同一个标签页中提供论文阅读和 AI 辅助。PDF 在浏览器本地解析；项目没有账号系统、分析埋点或内置云端服务，模型、Prompt 和权限均由使用者配置。
 
-1. 下载 [Lumen Paper v0.1.17 扩展 ZIP](https://github.com/ycycse/lumen-paper/releases/download/v0.1.17/lumen-paper-extension-v0.1.17.zip) 并解压。
-2. 打开 `chrome://extensions`，开启右上角「开发者模式」。
-3. 点击「加载已解压的扩展程序」，选择包含 `manifest.json` 的解压目录。
-4. 点击扩展图标进入设置，填写自己的 OpenAI-compatible API 配置即可试用。
+<a href="docs/lumen-reader.png">
+  <img src="docs/lumen-reader.png" alt="合成论文 PDF 与 Paper Brief 以分栏方式并排显示">
+</a>
 
-Release ZIP 只包含可加载的 Chrome 扩展，不包含本机 Codex Bridge。需要 Codex Plan 模式时，请按下一节获取源码并在项目根目录启动 Bridge。
+<p align="center"><sub>AI 面板与 PDF 独立分栏，可以拖动宽度、放大内容或完全收起。</sub></p>
 
-## 从源码安装
+## 功能
+
+- **Paper Brief**：整理贡献、机制、证据、局限和建议阅读顺序。
+- **选区交流与页码引用**：解释、翻译、质疑，并跳回对应 PDF 页面。
+- **划线与笔记**：按论文保存在本地，不修改原始文件。
+- **舒适阅读**：侧栏、内容宽度、字号、字体和 Focus 模式均可调整。
+- **双 AI 后端**：连接 OpenAI-compatible API，或通过 Bridge 使用 Codex CLI。
+- **透明配置**：解读与交流可分别选择模型，项目 Prompt 可查看、修改和恢复。
+
+## 界面
+
+<sub>截图来自真实扩展和本地生成的合成论文；其中的标题、作者、正文、图表和数值均为虚构内容。点击图片可查看原图。</sub>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/lumen-highlights.png"><img src="docs/lumen-highlights.png" alt="PDF 原文划线与页边笔记"></a>
+      <br><sub><strong>划线与笔记</strong>：高亮留在原文，判断写在页边。</sub>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/lumen-chat.png"><img src="docs/lumen-chat.png" alt="围绕论文证据与 AI 交流"></a>
+      <br><sub><strong>证据交流</strong>：保留上下文和可点击页码。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/lumen-codex-settings.png"><img src="docs/lumen-codex-settings.png" alt="API、Codex Bridge、模型与权限配置"></a>
+      <br><sub><strong>后端与权限</strong>：API、Codex、模型和工具权限均显式配置。</sub>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/lumen-prompt-studio.png"><img src="docs/lumen-prompt-studio.png" alt="Prompt Studio 中的可编辑提示词"></a>
+      <br><sub><strong>Prompt Studio</strong>：项目 Prompt 全部透明、可改、可恢复。</sub>
+    </td>
+  </tr>
+</table>
+
+## 安装
+
+1. 打开 [Latest Release](https://github.com/ycycse/lumen-paper/releases/latest)，下载并解压扩展 ZIP。
+2. 打开 `chrome://extensions`，开启「开发者模式」。
+3. 点击「加载已解压的扩展程序」，选择包含 `manifest.json` 的目录。
+4. 打开 Lumen 设置，配置 AI 后端。
+
+本机 PDF 如未自动进入 Lumen，请在扩展详情页开启「允许访问文件网址」，或从 Lumen 手动选择文件。项目目前尚未发布到 Chrome Web Store。
+
+从源码构建：
 
 ```bash
 git clone https://github.com/ycycse/lumen-paper.git
@@ -56,136 +86,81 @@ npm ci
 npm run build
 ```
 
-然后在 `chrome://extensions` 选择生成的 `dist/` 目录。源码模式同时包含 `npm run bridge` 所需的本机 Bridge。
+然后在 `chrome://extensions` 中加载 `dist/`。
 
-本机 PDF：
+## AI 后端
 
-- Chrome 151+ 的原生 MIME handler 可直接处理 `file://` PDF。
-- Chrome 150 若想自动接管本地 PDF，需要在扩展详情页开启「允许访问文件网址」；也可以随时从 Lumen 内选择文件，不需要该权限。
+| | OpenAI-compatible API | Codex CLI |
+|---|---|---|
+| 准备 | Endpoint、模型、API key | Node.js、已登录的 Codex CLI、本机 Bridge |
+| 本地进程 | 不需要 | 需要 |
+| 适合 | 轻量解读与交流 | Web search、计算验证和 agent workflow |
+| 凭证 | Key 保存在 Chrome 本地 | Codex 登录留在 CLI |
 
-## 配置自定义 API
+两个后端都支持为 Paper Brief 和交流分别指定模型。API 模式可以读取 endpoint 的模型列表，也允许手动输入。
 
-设置页选择「自定义 API」，填写：
+## Codex Bridge
 
-- Chat Completions endpoint，例如 `https://api.openai.com/v1/chat/completions`
-- 论文解读 / 总结模型
-- 交流 / 划线问答模型
-- API key
+Bridge 将扩展请求转发给本机 Codex CLI，只监听 `127.0.0.1`。使用 API 模式时不需要安装。Bridge 安装包随 Release 提供；如果 Latest Release 尚未包含，可从源码运行 `npm run bridge`。
 
-点击模型框会从 Chat Completions endpoint 对应的 `/models` 自动读取列表。也可以使用 OpenRouter、Ollama 或内部网关；如果网关没有模型列表接口，仍可手动输入模型名。生成请求需要兼容 OpenAI Chat Completions 的 `messages` / `choices[0].message.content` 结构。
-
-API key 保存在 `chrome.storage.local`，不会同步到 Chrome 账号。它不是系统钥匙串加密存储；如果要公开分发，建议把直连 API 替换为自己的鉴权后端。
-
-完整数据边界见 [Privacy](PRIVACY.md)。
-
-## 配置 Codex Plan
-
-ChatGPT subscription 不能直接当普通 API key 使用。Lumen 采用本机 programmatic path：bridge 调用已经登录的 `codex exec`。
+安装后常用命令：
 
 ```bash
-codex login status
-npm run bridge
+~/.local/bin/lumen-paper-bridge start
+~/.local/bin/lumen-paper-bridge status
+~/.local/bin/lumen-paper-bridge pair
 ```
 
-bridge 启动后会显示一次 pairing token。把它粘贴到 Lumen 设置页，点击「测试连接」。默认命令只开放 Reader profile。
-点击 Codex 模型框时，Bridge 会通过 Codex app-server 的 `model/list` 读取当前账号实际可见的模型；解读和聊天可分别指定，留空则跟随 Codex 当前默认模型。Codex 面板还可分别关闭 Web search 和计算验证。升级 Bridge 后需要重启一次进程。
-终端里的 `start / join / done` 会显示当前任务进度；同一个请求只会消耗一次 Codex 调用。
+首次启动会在 macOS 自动复制 pairing token。升级不会更换 token。
 
-需要更完整的 Codex agent 能力时，必须从 Bridge 端显式解锁，扩展页面不能单方面提权：
+| Profile | 权限 |
+|---|---|
+| Reader | 默认，只读临时目录 |
+| Agent | 加载 Codex 配置和工具，可写指定 workspace |
+| Full Agent | 无 sandbox、无审批，需在 Bridge 端显式解锁 |
 
-```bash
-# 加载用户 Codex config、rules、skills、MCP；可写指定 workspace
-npm run bridge:agent -- --workspace /absolute/path/to/workspace
+Full Agent 仅应用于可信任务和 workspace。源码启动和权限说明见 [Bridge README](bridge/README.md)。
 
-# 无 sandbox、无审批；只用于你主动发起且完全信任的请求
-npm run bridge:full -- --workspace /absolute/path/to/workspace
-```
+## 数据与隐私
 
-Paper Brief 无论设置如何都固定走 Reader profile，避免打开 PDF 后的自动任务继承 Agent/Full Agent 权限。
+- PDF 在浏览器本地解析；执行 AI 操作时才发送相关文本。
+- 摘要、划线、笔记、阅读设置和可选聊天历史按论文保存在本地。
+- API key 保存在 `chrome.storage.local`，不会同步到 Chrome 账号，但不是系统钥匙串加密存储。
+- Bridge 仅接受 loopback 请求，并验证扩展 Origin 和 pairing token。
+- 自动 Paper Brief 始终使用只读 Reader profile。
 
-安全边界：
+详见 [Privacy](PRIVACY.md) 与 [Security Policy](SECURITY.md)。
 
-- 只监听 `127.0.0.1:43177`；需要 256-bit pairing token，并精确限制为 manifest 公钥对应的 Lumen extension ID。
-- Reader 使用 `--sandbox read-only --ask-for-approval never --ephemeral`，在空临时目录运行并忽略 user config / exec rules。
-- Agent 使用 `workspace-write`，会加载你的 Codex config、rules、skills 与 MCP；Bridge 启动参数决定其唯一 workspace。
-- Full Agent 使用 Codex 官方的 `--dangerously-bypass-approvals-and-sandbox`。它可以执行 shell、读写本机文件、读取进程环境并触发 MCP 外部副作用；只应在理解 prompt injection 风险后主动启用。
-- “允许计算”开关属于可见、可编辑的 runtime prompt 约束；真正的命令/文件权限以 Reader、Agent、Full Agent profile 为准。
-- bridge 不读取、不复制 `~/.codex/auth.json`；认证完全交给 Codex CLI。
-
-Prompt Studio 能透明展示的是 **Lumen 与 Bridge 自己添加的 prompt**。OpenAI/Codex 服务内部的 system/developer instructions 不会暴露给扩展，也无法由扩展覆盖。
-
-Codex 本质上仍是 coding agent。它适合复用现有 Codex 额度做个人本机阅读，但在纯论文理解的 latency/quality/cost 上，通用模型 API 可能更合适。
-
-## 开发与验证
-
-环境要求：Node.js 22+、npm，以及 Chrome 或 Chrome for Testing。
+## 开发
 
 ```bash
-npm ci
 npm run check
 npm test
 npm run build
+npm run bridge:check
 ```
 
-真实扩展 smoke（需要支持 `--load-extension` 的 Chromium / Chrome for Testing）：
+打包运行 `npm run package`；真实 Chrome smoke 使用 `npm run smoke -- /absolute/path/to/paper.pdf`。
 
-```bash
-npm run smoke -- /absolute/path/to/paper.pdf
+当前限制：扫描版 PDF 暂无 OCR；图表、公式和图片暂未进入 vision 请求；检索仍是轻量 lexical rank；划线不会写回 PDF annotation object。
 
-# Chrome 不在默认安装位置时：
-CHROME_BIN="/path/to/Chrome for Testing" npm run smoke -- /absolute/path/to/paper.pdf
-```
+## Contributing
 
-当前 smoke 在一篇 53 页论文上验证：53 个页面、canvas 渲染、8,536 个 text spans、selection toolbar 和持久化 highlight overlay。
+本项目的代码由 **Codex** 完成，并以 human-agent collaboration 的方式持续维护。欢迎人类开发者，也欢迎任何 coding agent 直接贡献；agent-generated PR 在这里是一等公民。
 
-## 架构
+尤其欢迎这些方向：
 
-```text
-PDF navigation
-  ├─ Chrome 151+ mimeHandler stream (single-use response)
-  └─ Chrome 150 webRequest fallback / manual file picker
-         ↓
-PDF.js viewer → per-page text index → lexical page retrieval
-         ↓                         ↓
-local highlights/notes       Paper Brief / selection / chat prompts
-         ↓                         ↓
-chrome.storage.local      service worker provider boundary
-                                  ├─ OpenAI-compatible API
-                                  └─ localhost Codex bridge → codex exec
-```
+- 更自然的论文阅读、证据定位、引用与笔记体验；
+- 新的模型 provider、agent workflow 和研究工具集成；
+- PDF 兼容性、性能、无障碍与 local-first 隐私改进；
+- 小而有趣的实验功能——请说明它解决什么问题，以及如何验证有效。
 
-## 目前边界
+开始贡献：
 
-- 扫描版 PDF 暂无 OCR。
-- 表格、公式、图片当前只读 text layer；下一版可加入 page crop / vision 请求。
-- 问答检索是轻量 lexical rank，不是 embedding/RAG。
-- 划线存为 Lumen 的 normalized page rect，不会写回 PDF annotation object。
-- 还没有引用卡片、跨论文 library 和 Markdown/Zotero 导出。
-
-## 仓库安全
-
-- `bridge/.token`、`.env*`、私钥、构建产物和本机 smoke 工作目录均被 `.gitignore` 排除。
-- 不要把 API key、Bridge pairing token、Codex 登录文件或真实论文 PDF 提交到 issue、日志或仓库。
-- 发布扩展前请重新执行 `npm run check && npm test && npm run build`，并检查 `dist/manifest.json` 的权限变化。
-- 安全问题请通过 GitHub 的私密渠道联系仓库维护者，不要在公开 issue 中附带凭证或论文原文。
-
-## 产品判断
-
-- Sider 值得借的是“选中即问、始终不离开当前页面”，不是多模型入口堆叠。
-- Moonlight 值得借的是“novelty / method / result + 原文回跳”，不是让 AI summary 抢占阅读。
-- Lumen 的差异点应继续强化 **claim–evidence anchoring**：AI 输出只有在能回到原文 span 时才算完成。
-
-## 参考
-
-- [Sider Chat](https://sider.ai/chat)
-- [Moonlight: What’s Moonlight?](https://docs.themoonlight.io/articles/4008366-whats-moonlight)
-- [Moonlight Highlight](https://docs.themoonlight.io/help/articles/9085677-highlight)
-- [Chrome `mimeHandler` API](https://developer.chrome.com/docs/extensions/reference/api/mimeHandler)
-- [Codex authentication](https://learn.chatgpt.com/docs/auth)
-- [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
+1. 先通过 [GitHub Issues](https://github.com/ycycse/lumen-paper/issues) 描述问题或想法，较小的修复可以直接提交 PR。
+2. 保持改动聚焦；涉及界面时附上截图，涉及 agent 行为时说明权限边界和验证方式。
+3. 提交前运行 `npm run check` 和 `npm test`。如果主要由 agent 完成，请在 PR 中注明所用 agent、关键设计决策和人工验证结果。
 
 ## License
 
 Lumen Paper 自有源码与项目资产使用 [MIT License](LICENSE)。第三方软件仍适用各自许可证，详见 [Third-Party Notices](public/THIRD_PARTY_NOTICES.txt)。
-
-Lumen Paper 是独立项目，与 Sider、Moonlight、OpenAI 或 Google Chrome 不存在隶属或官方背书关系。截图中的论文版权归原作者所有，仅用于展示阅读器界面。
