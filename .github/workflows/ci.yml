@@ -21,4 +21,13 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
-      - run: npm run package
+      - run: npm run bridge:check
+      - run: npm run bridge:smoke
+      - run: npm run package:release
+      - run: npm run bridge:installer-smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-paper-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7

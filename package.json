@@ -1,7 +1,7 @@
 {
   "name": "lumen-paper",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "A calm, evidence-anchored AI reader for research PDFs in Chrome.",
   "license": "MIT",
   "repository": {
@@ -32,8 +32,13 @@
     "bridge": "node bridge/server.mjs",
     "bridge:agent": "node bridge/server.mjs --allow-agent",
     "bridge:full": "node bridge/server.mjs --allow-agent --allow-unrestricted",
+    "bridge:check": "node --check bridge/server.mjs && bash -n bridge/lumen-paper-bridge && bash -n 'bridge/Start Lumen Paper Bridge.command' && bash -n scripts/install-bridge.template.sh",
+    "bridge:smoke": "node scripts/smoke-bridge.mjs",
+    "bridge:installer-smoke": "node scripts/smoke-bridge-installer.mjs",
     "notices": "node scripts/generate-third-party-notices.mjs",
-    "package": "npm run build && npm run notices && node scripts/package.mjs"
+    "package": "npm run build && npm run notices && node scripts/package.mjs",
+    "package:bridge": "node scripts/package-bridge.mjs",
+    "package:release": "npm run package && npm run package:bridge && node scripts/package-release.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.18 — 2026-07-30
+
+- Added a standalone Codex Bridge Release bundle that runs without cloning the repository or installing npm dependencies.
+- Added a checksum-pinned, no-sudo installer and a transparent macOS `.command` launcher for foreground Reader mode.
+- Moved the pairing token into a stable user state directory for install-based upgrades.
+- Added Bridge version/protocol receipts, friendly port validation, loopback/auth smoke coverage and automated tag releases.
+- Replaced source-directory Bridge commands in the settings page with the installed `lumen-paper-bridge` command.
+- Reorganized the README around installation, architecture, security, limitations and contribution guidance.
+- Replaced the oversized-sidebar hero with a reproducible gallery of real UI states driven by a clearly labeled synthetic paper fixture.
+
 ## 0.1.17 — 2026-07-30
 
 - Added System, Bookish and Custom local-font choices to the existing `Aa` menu.

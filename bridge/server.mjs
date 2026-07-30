@@ -2,13 +2,23 @@
 import { createServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { BRIDGE_PROTOCOL_VERSION, BRIDGE_VERSION } from "./version.mjs";
 
 const bridgeDir = dirname(fileURLToPath(import.meta.url));
-const tokenPath = join(bridgeDir, ".token");
+const configuredStateDir = String(process.env.LUMEN_BRIDGE_STATE_DIR || "").trim();
+if (configuredStateDir && !isAbsolute(configuredStateDir)) {
+  throw new Error("LUMEN_BRIDGE_STATE_DIR must be an absolute path");
+}
+const stateDir = configuredStateDir ? resolve(configuredStateDir) : bridgeDir;
+if (configuredStateDir) {
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  chmodSync(stateDir, 0o700);
+}
+const tokenPath = join(stateDir, ".token");
 const host = process.env.LUMEN_BRIDGE_HOST || "127.0.0.1";
 const port = Number(process.env.LUMEN_BRIDGE_PORT || 43177);
 const codexBin = process.env.LUMEN_CODEX_BIN || "codex";
@@ -20,7 +30,14 @@ const bridgeOptions = parseBridgeOptions(process.argv.slice(2));
 if (!["127.0.0.1", "::1", "localhost"].includes(host)) {
   throw new Error("LUMEN_BRIDGE_HOST must remain loopback-only");
 }
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  throw new Error("LUMEN_BRIDGE_PORT must be an integer between 1 and 65535");
+}
 const token = ensureToken();
+if (bridgeOptions.printToken) {
+  process.stdout.write(`${token}\n`);
+  process.exit(0);
+}
 const jobsByFingerprint = new Map();
 let modelsCache = { expiresAt: 0, models: [] };
 
@@ -37,6 +54,8 @@ const server = createServer(async (request, response) => {
     return json(response, 200, {
       ok: true,
       service: "lumen-codex-bridge",
+      version: BRIDGE_VERSION,
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
       busy: jobsByFingerprint.size > 0,
       activeJobs: [...jobsByFingerprint.values()].map(({ id, startedAt }) => ({
         id,
@@ -79,25 +98,49 @@ const server = createServer(async (request, response) => {
   }
 });
 
+server.on("error", (error) => {
+  if (error && typeof error === "object" && "code" in error && error.code === "EADDRINUSE") {
+    process.stderr.write(`Lumen Bridge could not start: http://${host}:${port} is already in use.\n`);
+  } else {
+    process.stderr.write(`Lumen Bridge could not start: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+  process.exitCode = 1;
+});
+
 server.listen(port, host, () => {
   const status = codexStatus();
-  process.stdout.write(`\nLumen Codex bridge\n`);
+  process.stdout.write(`\nLumen Codex bridge v${BRIDGE_VERSION}\n`);
   process.stdout.write(`  URL:   http://${host}:${port}\n`);
   process.stdout.write(`  Codex: ${status}\n`);
   process.stdout.write(`  Origin: ${allowedOrigin}\n`);
   process.stdout.write(`  Modes: reader${bridgeOptions.allowAgent ? ", agent" : ""}${bridgeOptions.allowUnrestricted ? ", unrestricted" : ""}\n`);
   if (bridgeOptions.workspace) process.stdout.write(`  Agent workspace: ${bridgeOptions.workspace}\n`);
-  process.stdout.write(`  Pairing token (paste once in Lumen settings):\n\n  ${token}\n\n`);
+  if (process.env.LUMEN_BRIDGE_PRINT_TOKEN === "0") {
+    process.stdout.write("  Pairing token: hidden; run `lumen-paper-bridge pair` locally to copy it.\n");
+  } else {
+    process.stdout.write(`  Pairing token (paste once in Lumen settings):\n\n  ${token}\n\n`);
+  }
   process.stdout.write(`The token is stored in ${tokenPath} with user-only permissions.\n`);
 });
 
 function ensureToken() {
-  if (process.env.LUMEN_BRIDGE_TOKEN) return process.env.LUMEN_BRIDGE_TOKEN.trim();
-  if (existsSync(tokenPath)) return readFileSync(tokenPath, "utf8").trim();
+  if (process.env.LUMEN_BRIDGE_TOKEN) return validatedToken(process.env.LUMEN_BRIDGE_TOKEN, "LUMEN_BRIDGE_TOKEN");
+  if (existsSync(tokenPath)) {
+    chmodSync(tokenPath, 0o600);
+    return validatedToken(readFileSync(tokenPath, "utf8"), tokenPath);
+  }
   const value = randomBytes(32).toString("base64url");
   writeFileSync(tokenPath, `${value}\n`, { mode: 0o600, flag: "wx" });
   chmodSync(tokenPath, 0o600);
   return value;
+}
+
+function validatedToken(value, source) {
+  const normalized = String(value).trim();
+  if (!/^[A-Za-z0-9_-]{16,256}$/.test(normalized)) {
+    throw new Error(`Invalid pairing token in ${source}`);
+  }
+  return normalized;
 }
 
 function codexStatus() {
@@ -171,7 +214,7 @@ function queryCodexModels() {
       id: 1,
       method: "initialize",
       params: {
-        clientInfo: { name: "lumen-paper", title: "Lumen Paper", version: "0.1.17" },
+        clientInfo: { name: "lumen-paper", title: "Lumen Paper", version: BRIDGE_VERSION },
         capabilities: { experimentalApi: true },
       },
     });
@@ -395,10 +438,12 @@ function allowOrigin(origin) {
 function parseBridgeOptions(argv) {
   let allowAgent = false;
   let allowUnrestricted = false;
+  let printToken = false;
   let workspace = "";
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--allow-agent") allowAgent = true;
+    else if (argument === "--print-token") printToken = true;
     else if (argument === "--allow-unrestricted") {
       allowAgent = true;
       allowUnrestricted = true;
@@ -412,7 +457,7 @@ function parseBridgeOptions(argv) {
     workspace = realpathSync(workspace);
     if (!statSync(workspace).isDirectory()) throw new Error("--workspace must point to a directory");
   }
-  return { allowAgent, allowUnrestricted, workspace };
+  return { allowAgent, allowUnrestricted, workspace, printToken };
 }
 
 function assertModeAllowed(mode) {

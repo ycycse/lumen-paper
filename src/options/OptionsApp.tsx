@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, CircleAlert, Code2, Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw, RotateCcw, Save, Terminal } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleAlert, Code2, Copy, Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw, RotateCcw, Save, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_CHALLENGE_TEMPLATE,
@@ -17,12 +17,14 @@ import type { AiResponse, LumenSettings, ModelListResponse, ModelOption, Provide
 
 type TestState = "idle" | "testing" | "ok" | "error";
 type CatalogState = "idle" | "loading" | "ok" | "error";
+const BRIDGE_INSTALL_COMMAND = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/ycycse/lumen-paper/releases/download/v0.1.18/install-lumen-paper-bridge.sh | bash";
 
 export function OptionsApp() {
   const [settings, setSettings] = useState<LumenSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [bridgeCommandCopied, setBridgeCommandCopied] = useState(false);
   const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
   const [testState, setTestState] = useState<TestState>("idle");
   const [testMessage, setTestMessage] = useState("");
@@ -131,6 +133,12 @@ export function OptionsApp() {
     }
   };
 
+  const copyBridgeInstallCommand = async () => {
+    await navigator.clipboard.writeText(BRIDGE_INSTALL_COMMAND);
+    setBridgeCommandCopied(true);
+    window.setTimeout(() => setBridgeCommandCopied(false), 1800);
+  };
+
   if (!loaded) return <div className="options-loading"><LoaderCircle className="spin" /> 正在读取设置</div>;
 
   return (
@@ -212,11 +220,21 @@ export function OptionsApp() {
             </div>
             <div className="terminal-instruction">
               <span>2</span>
-              <div><b>在项目目录启动本机 bridge</b><code>npm run bridge</code></div>
+              <div>
+                <b>一条命令安装并启动 Reader Bridge</b>
+                <div className="bridge-install-command">
+                  <code>{BRIDGE_INSTALL_COMMAND}</code>
+                  <button type="button" onClick={() => void copyBridgeInstallCommand()}>
+                    {bridgeCommandCopied ? <Check size={13} /> : <Copy size={13} />}
+                    {bridgeCommandCopied ? "已复制" : "复制"}
+                  </button>
+                </div>
+                <small>无需 git clone、npm install 或 sudo；终端保持开启，按 Ctrl-C 停止。</small>
+              </div>
             </div>
             <div className="terminal-instruction">
               <span>3</span>
-              <div><b>复制终端显示的 pairing token 到下方</b><small>Paper Brief 始终使用 Reader；交流权限由下方 profile 控制。</small></div>
+              <div><b>把已复制的 pairing token 粘贴到下方</b><small>Paper Brief 始终使用 Reader；交流权限由下方 profile 控制。</small></div>
             </div>
             <div className="field-grid">
               <Field label="Bridge URL">
@@ -298,10 +316,10 @@ export function OptionsApp() {
             <div className={`bridge-command ${settings.codexPermissionMode === "unrestricted" ? "danger" : ""}`}>
               <span>当前 profile 的启动命令</span>
               <code>{settings.codexPermissionMode === "reader"
-                ? "npm run bridge"
+                ? "~/.local/bin/lumen-paper-bridge start"
                 : settings.codexPermissionMode === "agent"
-                  ? "npm run bridge:agent -- --workspace /absolute/path"
-                  : "npm run bridge:full -- --workspace /absolute/path"}</code>
+                  ? "~/.local/bin/lumen-paper-bridge agent --workspace /absolute/path"
+                  : "~/.local/bin/lumen-paper-bridge full --workspace /absolute/path"}</code>
             </div>
             <div className="codex-tool-list">
               <Toggle
