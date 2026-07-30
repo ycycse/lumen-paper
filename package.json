@@ -1,7 +1,7 @@
 {
   "name": "lumen-paper",
   "private": true,
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "A calm, evidence-anchored AI reader for research PDFs in Chrome.",
   "license": "MIT",
   "repository": {
