@@ -1,3 +1,7 @@
+<p align="right">
+  <strong>简体中文</strong> · <a href="README.en.md">English</a>
+</p>
+
 <p align="center">
   <img src="public/icons/icon-128.png" width="76" alt="Lumen Paper icon">
 </p>
