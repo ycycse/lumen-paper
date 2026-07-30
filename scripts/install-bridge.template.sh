@@ -16,8 +16,8 @@ Usage:
   install-lumen-paper-bridge.sh [--no-start]
 
 The installer never uses sudo. It verifies the versioned Release archive,
-keeps the pairing token in a stable state directory, and starts Reader mode
-in the foreground unless --no-start is supplied.
+keeps the pairing token in a stable state directory, and starts one Bridge
+process in the background unless --no-start is supplied.
 EOF
 }
 
@@ -32,6 +32,11 @@ done
 
 if [ -z "${HOME:-}" ]; then
   printf 'HOME is required for a user-only installation.\n' >&2
+  exit 1
+fi
+
+if [ -n "${SUDO_USER:-}" ]; then
+  printf 'Do not run this installer with sudo. It installs safely into your user account.\n' >&2
   exit 1
 fi
 
@@ -144,11 +149,14 @@ fi
 printf '\nInstalled without sudo:\n  %s\n' "$VERSION_DIR"
 printf 'Command:\n  %s\n' "$COMMAND_LINK"
 printf 'Finder launcher:\n  %s\n' "$APPLICATION_LINK"
-printf 'The Bridge stays in the foreground and stops with Ctrl-C.\n\n'
+printf '\n'
 
 if [ "$NO_START" -eq 1 ]; then
-  printf 'Start it with:\n  %s start\n' "$COMMAND_LINK"
+  printf 'The Bridge was not started. Start it later with:\n  %s start\n' "$COMMAND_LINK"
   exit 0
 fi
 
-exec "$COMMAND_LINK" start
+printf 'Starting or upgrading the background Bridge…\n'
+"$COMMAND_LINK" restart
+printf '\nInstallation complete. This terminal can be closed.\n'
+printf 'Reader, Agent and Full Agent permissions are selected in Lumen settings.\n'

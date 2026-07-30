@@ -161,8 +161,14 @@ async function callCodexBridge(
   }
   const url = `${settings.bridgeUrl.replace(/\/$/, "")}/v1/chat`;
   const model = request.purpose === "summary" ? settings.codexSummaryModel : settings.codexChatModel;
+  const mode = request.purpose === "summary" ? "reader" : settings.codexPermissionMode;
+  const workspace = mode === "reader" ? "" : settings.codexWorkspace.trim();
+  if (mode !== "reader" && !workspace.startsWith("/")) {
+    return { ok: false, error: "Agent 和 Full Agent 需要在设置中填写绝对 workspace 路径。" };
+  }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 210_000);
+  const timeoutMs = mode === "reader" ? 210_000 : mode === "agent" ? 660_000 : 960_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -174,7 +180,8 @@ async function callCodexBridge(
         ...request,
         model: model || undefined,
         agent: {
-          mode: request.purpose === "summary" ? "reader" : settings.codexPermissionMode,
+          mode,
+          workspace: mode === "reader" ? undefined : workspace,
           runtimePrompt: codexRuntimePrompt(
             settings.codexRuntimePrompt,
             settings.codexWebSearch,
@@ -190,7 +197,9 @@ async function callCodexBridge(
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) {
-      const detail = data.error || `Codex bridge ${response.status}`;
+      const detail = legacyBridgeProfileError(String(data.error || ""))
+        ? "本机 Bridge 版本过旧。请重新运行设置页的安装命令；若旧 Bridge 仍占用终端，只需先 Ctrl-C 一次，再运行 lumen-paper-bridge start。"
+        : data.error || `Codex bridge ${response.status}`;
       const error = response.status === 429
         ? "Codex 当前队列已满，请等待正在进行的解读完成后再试。"
         : detail;
@@ -207,6 +216,10 @@ async function callCodexBridge(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function legacyBridgeProfileError(value: string): boolean {
+  return /(?:Agent mode|Full Agent) is locked|npm run bridge:(?:agent|full)/i.test(value);
 }
 
 async function listModels(request: ModelListRequest): Promise<ModelListResponse> {

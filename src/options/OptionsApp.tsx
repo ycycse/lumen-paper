@@ -221,7 +221,7 @@ export function OptionsApp() {
             <div className="terminal-instruction">
               <span>2</span>
               <div>
-                <b>一条命令安装并启动 Reader Bridge</b>
+                <b>安装或更新 Bridge</b>
                 <div className="bridge-install-command">
                   <code>{BRIDGE_INSTALL_COMMAND}</code>
                   <button type="button" onClick={() => void copyBridgeInstallCommand()}>
@@ -229,12 +229,20 @@ export function OptionsApp() {
                     {bridgeCommandCopied ? "已复制" : "复制"}
                   </button>
                 </div>
-                <small>无需 git clone、npm install 或 sudo；终端保持开启，按 Ctrl-C 停止。</small>
+                <small>无需 git clone、npm install 或 sudo；安装后启动单一后台服务，并立即返回终端。</small>
               </div>
             </div>
             <div className="terminal-instruction">
               <span>3</span>
-              <div><b>把已复制的 pairing token 粘贴到下方</b><small>Paper Brief 始终使用 Reader；交流权限由下方 profile 控制。</small></div>
+              <div>
+                <b>把 pairing token 粘贴到下方</b>
+                <code>~/.local/bin/lumen-paper-bridge pair</code>
+                <small>安装时会自动复制；之后可用这条命令再次复制。</small>
+              </div>
+            </div>
+            <div className="bridge-service">
+              <span><strong>Bridge 后台服务</strong><small>Reader、Agent 和 Full Agent 共用同一个进程。</small></span>
+              <code>~/.local/bin/lumen-paper-bridge start</code>
             </div>
             <div className="field-grid">
               <Field label="Bridge URL">
@@ -273,7 +281,7 @@ export function OptionsApp() {
             </div>
             <div className="permission-heading">
               <strong>交流 / 划线的 Codex 权限</strong>
-              <small>这是真实 CLI sandbox，不只是 prompt 文案。</small>
+              <small>选择并保存后立即生效，无需重启 Bridge。</small>
             </div>
             <div className="permission-grid">
               <PermissionCard
@@ -287,7 +295,7 @@ export function OptionsApp() {
                 active={settings.codexPermissionMode === "agent"}
                 title="Agent"
                 badge="workspace-write"
-                description="加载 Codex config、rules、skills 与 MCP；可在 Bridge 指定 workspace 工作。"
+                description="加载 Codex config、rules、skills 与 MCP；以 workspace-write 使用下方目录。"
                 onClick={() => patch("codexPermissionMode", "agent")}
               />
               <PermissionCard
@@ -300,6 +308,20 @@ export function OptionsApp() {
                 onClick={() => patch("codexPermissionMode", "unrestricted")}
               />
             </div>
+            {settings.codexPermissionMode !== "reader" && (
+              <div className="codex-workspace">
+                <label className="field">
+                  <span>Agent workspace（绝对路径）</span>
+                  <input
+                    value={settings.codexWorkspace}
+                    onChange={(event) => patch("codexWorkspace", event.target.value)}
+                    placeholder="/Users/you/path/to/workspace"
+                    aria-invalid={Boolean(settings.codexWorkspace) && !settings.codexWorkspace.trim().startsWith("/")}
+                  />
+                </label>
+                <small>Agent 将它作为 workspace-write 边界；Full Agent 只把它作为起始目录，仍可访问其他位置。Reader 和自动 Paper Brief 不会使用它。</small>
+              </div>
+            )}
             <label className="danger-confirm">
               <input
                 type="checkbox"
@@ -313,14 +335,6 @@ export function OptionsApp() {
               />
               <span>我理解：恶意 PDF 或网页 prompt injection 可能在 Full Agent 中读写本机数据。</span>
             </label>
-            <div className={`bridge-command ${settings.codexPermissionMode === "unrestricted" ? "danger" : ""}`}>
-              <span>当前 profile 的启动命令</span>
-              <code>{settings.codexPermissionMode === "reader"
-                ? "~/.local/bin/lumen-paper-bridge start"
-                : settings.codexPermissionMode === "agent"
-                  ? "~/.local/bin/lumen-paper-bridge agent --workspace /absolute/path"
-                  : "~/.local/bin/lumen-paper-bridge full --workspace /absolute/path"}</code>
-            </div>
             <div className="codex-tool-list">
               <Toggle
                 checked={settings.codexWebSearch}
@@ -331,11 +345,11 @@ export function OptionsApp() {
               <Toggle
                 checked={settings.codexCalculations}
                 title="允许 Codex 做计算验证"
-                description="这是完全可见的 runtime prompt 约束；真正文件/命令边界由上方 sandbox profile 决定。"
+                description="这是完全可见的 runtime prompt 约束；真正文件与命令边界由上方权限模式决定。"
                 onChange={(value) => patch("codexCalculations", value)}
               />
             </div>
-            <div className="codex-boundary"><CircleAlert size={15} /> ChatGPT subscription 不能直接当普通 API key 使用。Full Agent 只应对你主动发出的对话开放；自动 Paper Brief 永远不会继承该权限。</div>
+            <div className="codex-boundary"><CircleAlert size={15} /> ChatGPT subscription 不能直接当普通 API key 使用。权限在页面逐次请求；自动 Paper Brief 始终固定为 Reader，也不会携带 workspace。</div>
           </div>
         )}
       </section>
