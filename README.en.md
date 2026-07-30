@@ -112,7 +112,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/ycycse/lumen-paper/releases/latest/download/install-lumen-paper-bridge.sh | bash
 ```
 
-The installer never uses `sudo`. It verifies the version and SHA-256 checksum of the Bridge archive, installs it into your user account, starts the single Bridge process in the background, copies the pairing token, and returns control to your shell.
+The installer never uses `sudo`. It verifies the version and SHA-256 checksum of the Bridge archive, installs it into your user account, starts the Bridge in the background, copies the pairing token, and returns control to your shell.
 
 Common commands:
 
@@ -126,7 +126,7 @@ Common commands:
 
 On macOS, the first start copies the pairing token automatically. Upgrades safely restart an installer-managed Bridge without changing that token.
 
-There is only one Bridge process. Choose Reader, Agent, or Full Agent in Lumen settings; the next chat request uses the new profile immediately, with no local restart.
+The Bridge runs as a background process after installation. Reader, Agent, and Full Agent are per-request permission profiles selected in Lumen settings. Changes apply to the next chat request immediately, without managing or restarting the local process.
 
 | Profile | Permissions |
 |---|---|

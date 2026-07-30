@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.20 — 2026-07-30
+
+- Refined saved highlights into a lighter, paper-like marker treatment that keeps text legible.
+- Aligned each highlight line to the visible PDF canvas ink instead of the wider invisible text-layer box.
+- Recomputed alignment for existing highlights and zoom changes while preserving narrow punctuation selections.
+- Added real-browser regression checks for visual overhang, excessive inset and low-zoom selections.
+- Added an English project guide and clearer first-run Bridge documentation.
+
 ## 0.1.19 — 2026-07-30
 
 - Replaced three server-wide Bridge startup profiles with one background Bridge process.

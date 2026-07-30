@@ -112,7 +112,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/ycycse/lumen-paper/releases/latest/download/install-lumen-paper-bridge.sh | bash
 ```
 
-安装脚本不使用 `sudo`，会校验固定版本的 Bridge 包、安装到用户目录，并在后台启动唯一的 Bridge 进程。命令完成后会自动复制 pairing token，并立即把终端还给你。
+安装脚本不使用 `sudo`，会校验固定版本的 Bridge 包、安装到用户目录，并在后台启动 Bridge。命令完成后会自动复制 pairing token，并立即把终端还给你。
 
 安装后常用命令：
 
@@ -126,7 +126,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 首次启动会在 macOS 自动复制 pairing token。升级会安全重启由安装版管理的 Bridge，但不会更换 token。
 
-Bridge 不再有三套启动模式。Reader、Agent 和 Full Agent 都在 Lumen 设置页选择，下一次交流立即生效，无需重启本机进程。
+Bridge 安装后作为一个后台进程运行。Reader、Agent 和 Full Agent 是每次 AI 请求的权限 Profile，可在 Lumen 设置页随时切换；下一次交流立即生效，无需管理或重启本机进程。
 
 | 页面 Profile | 权限 |
 |---|---|

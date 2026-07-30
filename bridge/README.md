@@ -16,7 +16,7 @@ Bridge 是 Lumen Paper 与本机 Codex CLI 之间的透明适配器。它不需�
 ./lumen-paper-bridge start
 ```
 
-Bridge 只有一种运行模式。常用命令：
+Bridge 安装后在后台运行。常用管理命令：
 
 ```bash
 ./lumen-paper-bridge status
@@ -27,15 +27,15 @@ Bridge 只有一种运行模式。常用命令：
 
 `start` 会在后台启动并返回当前终端；`restart` 用于更新后切换到新版本；`pair` 会在 macOS 复制 token。需要排查问题时，可用 `./lumen-paper-bridge foreground` 临时查看实时日志。
 
-## 权限在页面切换
+## 在 Lumen 中选择权限
 
-Reader、Agent 和 Full Agent 不再对应不同启动命令。请在 Lumen 设置页选择：
+Bridge 负责连接本机 Codex；每次 AI 请求使用哪种权限，由 Lumen 设置页中的 Profile 决定：
 
 - `Reader`：只读临时目录，忽略用户 config 与 rules。
 - `Agent`：加载 Codex config、rules、skills 与 MCP，并以 `workspace-write` 使用页面中填写的绝对 workspace。
 - `Full Agent`：关闭 sandbox 与审批；页面 workspace 只是起始目录，并非访问边界。仅用于你主动发起且输入可信的任务；仍以当前用户身份运行，不需要 `sudo`。
 
-切换后下一次交流立即生效，不需要重启 Bridge。自动 Paper Brief 始终强制使用 Reader，不会继承 Agent、Full Agent 或 workspace。
+设置从下一次交流开始生效。自动 Paper Brief 始终使用 Reader，不读取 Agent 或 Full Agent 的 workspace。
 
 ## 本机边界
 
