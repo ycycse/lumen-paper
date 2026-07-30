@@ -27,9 +27,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { getDocument, TextLayer } from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
+import { normalizeMathDelimiters } from "../lib/markdown";
 import { chatPrompt, chatSystemPrompt, selectionPrompt, summaryPrompt } from "../lib/prompts";
 import {
   citationMarkdown,
@@ -1476,10 +1479,12 @@ function SummarySection({ title, items, tone = "normal" }: { title: string; item
 }
 
 function Markdown({ text, onPage }: { text: string; onPage: (page: number) => void }) {
+  const markdown = useMemo(() => citationMarkdown(normalizeMathDelimiters(text)), [text]);
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { trust: false, strict: false, throwOnError: false, maxExpand: 1000 }]]}
         components={{
           a: ({ href, children }) => {
             if (href?.startsWith("#lumen-page-")) {
@@ -1491,7 +1496,7 @@ function Markdown({ text, onPage }: { text: string; onPage: (page: number) => vo
           table: ({ children }) => <div className="markdown-table-wrap"><table>{children}</table></div>,
         }}
       >
-        {citationMarkdown(text)}
+        {markdown}
       </ReactMarkdown>
     </div>
   );

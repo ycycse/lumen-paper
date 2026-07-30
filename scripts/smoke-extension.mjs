@@ -83,6 +83,18 @@ const smokeAnswer = [
   "| 主实验 | 平均收益与置信区间 |",
   "| 消融 | 去掉 distillation 后是否退化 |",
   "",
+  "行内关系写作 \\(L_{\\mathrm{val}}=f(C)\\)，边际增益则是 $\\Delta L / \\Delta C$。",
+  "",
+  "\\[",
+  "\\text{模型规模 }N,\\quad \\text{训练数据 }D,\\quad \\text{训练计算量 }C",
+  "\\]",
+  "",
+  "$$",
+  "\\mathcal{L}_{\\mathrm{total}} = \\lambda_{\\mathrm{pretrain}}\\mathcal{L}_{\\mathrm{next-token}} + \\lambda_{\\mathrm{distill}}\\mathcal{L}_{\\mathrm{teacher}} + \\lambda_{\\mathrm{rl}}\\mathbb{E}_{\\tau \\sim \\pi_\\theta}[R(\\tau)]",
+  "$$",
+  "",
+  "代码分隔符保持原样：`\\(not_math\\)`。",
+  "",
   "建议先读主结果表，再回到方法假设。[[p:1]]",
 ].join("\n");
 let lastApiOrigin = "";
@@ -668,20 +680,52 @@ try {
   await waitFor(async () => !(await cdp.evaluate(`document.querySelector('.composer button')?.disabled`)), 5_000, "enabled chat send");
   await cdp.evaluate(`document.querySelector('.composer button')?.click()`);
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2500));
-  const actionState = await cdp.evaluate(`(() => ({
-    rootAlive: Boolean(document.querySelector('.reader-app .topbar')),
-    messages: document.querySelectorAll('.message').length,
-    assistants: document.querySelectorAll('.message.assistant').length,
-    toast: document.querySelector('.toast')?.textContent,
-    body: document.body.innerText.slice(-500)
-  }))()`);
+  const actionState = await cdp.evaluate(`(() => {
+    const assistants = [...document.querySelectorAll('.message.assistant')];
+    const answer = assistants.at(-1);
+    const displays = answer ? [...answer.querySelectorAll('.katex-display')] : [];
+    const inlineMath = answer
+      ? [...answer.querySelectorAll('.katex')].filter((node) => !node.closest('.katex-display')).length
+      : 0;
+    const visibleAnswer = answer?.cloneNode(true);
+    visibleAnswer?.querySelectorAll('code, pre, .katex').forEach((node) => node.remove());
+    return {
+      rootAlive: Boolean(document.querySelector('.reader-app .topbar')),
+      messages: document.querySelectorAll('.message').length,
+      assistants: assistants.length,
+      inlineMath,
+      displayMath: displays.length,
+      displayOverflowX: displays.map((node) => getComputedStyle(node).overflowX),
+      codePreserved: answer?.querySelector('code')?.textContent === '\\\\(not_math\\\\)',
+      codeMath: answer?.querySelectorAll('code .katex').length || 0,
+      rawMathVisible: /\\\\(?:text|mathcal|lambda)|\\\\[[(]/.test(visibleAnswer?.innerText || ''),
+      toast: document.querySelector('.toast')?.textContent,
+      body: document.body.innerText.slice(-500)
+    };
+  })()`);
   process.stdout.write(`Action diagnostic: ${JSON.stringify(actionState)}\n`);
   if (!actionState.rootAlive) {
     const relevantEvents = cdp.events.filter(({ method }) => method === "Runtime.exceptionThrown" || method === "Log.entryAdded");
     process.stdout.write(`Runtime events: ${JSON.stringify(relevantEvents, null, 2)}\n`);
   }
   if (!actionState.rootAlive || !actionState.assistants) throw new Error(`Chat action failed: ${JSON.stringify(actionState)}`);
+  if (
+    actionState.inlineMath < 2 ||
+    actionState.displayMath < 2 ||
+    actionState.displayOverflowX.some((value) => value !== 'auto') ||
+    !actionState.codePreserved ||
+    actionState.codeMath !== 0 ||
+    actionState.rawMathVisible
+  ) {
+    throw new Error(`Math rendering regression: ${JSON.stringify(actionState)}`);
+  }
   metrics.chatMessages = actionState.messages;
+  metrics.mathRendering = {
+    inline: actionState.inlineMath,
+    display: actionState.displayMath,
+    overflow: actionState.displayOverflowX,
+    codePreserved: actionState.codePreserved,
+  };
   metrics.rootAliveAfterActions = actionState.rootAlive;
   metrics.apiRequestOrigin = lastApiOrigin;
   if (lastApiOrigin !== `chrome-extension://${extensionId}`) {

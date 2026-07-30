@@ -277,7 +277,7 @@ export function OptionsApp() {
                   onRefresh={() => void loadModels(true)}
                 />
               </Field>
-              <p className="model-guidance dark">点击模型框会读取当前 ChatGPT/Codex 账号实际可用的模型；留空会跟随 Codex 默认。</p>
+              <p className="model-guidance dark">点击模型框会读取当前 ChatGPT/Codex 账号实际可用的模型；留空会跟随 Codex 默认。这里使用当前填写值，论文页在点击“保存设置”前仍沿用上次保存的推理入口。</p>
             </div>
             <div className="permission-heading">
               <strong>交流 / 划线的 Codex 权限</strong>

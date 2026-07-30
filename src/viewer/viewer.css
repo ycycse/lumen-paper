@@ -287,6 +287,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .markdown-body code { padding: 2px 5px; border-radius: 5px; background: #eceee7; color: #4e5b31; font-family: "SFMono-Regular", Consolas, monospace; font-size: .88em; }
 .markdown-body pre { max-width: 100%; overflow: auto; margin: 16px 0; padding: 14px 15px; border: 1px solid rgba(35, 39, 31, .11); border-radius: 10px; background: #252921; color: #edf0e4; line-height: 1.62; }
 .markdown-body pre code { padding: 0; background: transparent; color: inherit; }
+.markdown-body .katex { font-size: 1.02em; line-height: 1.25; }
+.markdown-body .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; margin: 1.12em 0 1.22em; padding: .18em .1em .32em; scrollbar-width: thin; scrollbar-color: rgba(77, 84, 61, .22) transparent; overscroll-behavior-inline: contain; }
+.markdown-body .katex-display > .katex { min-width: min-content; text-align: center; }
+.markdown-body .katex-error { color: #8b5d50 !important; font-family: "SFMono-Regular", Consolas, monospace; font-size: .88em; white-space: pre-wrap; }
 .markdown-body hr { height: 1px; margin: 22px 0; border: 0; background: var(--line); }
 .markdown-table-wrap { max-width: 100%; overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.6); }
 .markdown-table-wrap table { width: 100%; border-collapse: collapse; font-size: .88em; }

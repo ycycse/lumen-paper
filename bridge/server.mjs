@@ -22,8 +22,14 @@ const tokenPath = join(stateDir, ".token");
 const host = process.env.LUMEN_BRIDGE_HOST || "127.0.0.1";
 const port = Number(process.env.LUMEN_BRIDGE_PORT || 43177);
 const codexBin = process.env.LUMEN_CODEX_BIN || "codex";
-const extensionId = process.env.LUMEN_EXTENSION_ID || "plekdghigijomceniepcgmfjpekcnkjf";
-const allowedOrigin = `chrome-extension://${extensionId}`;
+const chromeExtensionOriginPattern = /^chrome-extension:\/\/[a-p]{32}$/;
+const allowedPreflightMethods = new Set(["GET", "POST"]);
+const allowedPreflightHeaders = new Set(["content-type", "x-lumen-token"]);
+const configuredExtensionId = String(process.env.LUMEN_EXTENSION_ID || "").trim();
+if (configuredExtensionId && !/^[a-p]{32}$/.test(configuredExtensionId)) {
+  throw new Error("LUMEN_EXTENSION_ID must contain exactly 32 lowercase characters in the range a-p");
+}
+const configuredOrigin = configuredExtensionId ? `chrome-extension://${configuredExtensionId}` : "";
 const maxBodyBytes = 2 * 1024 * 1024;
 const maxConcurrentJobs = 4;
 const bridgeOptions = parseBridgeOptions(process.argv.slice(2));
@@ -46,6 +52,7 @@ const server = createServer(async (request, response) => {
   setSecurityHeaders(request, response);
   if (request.method === "OPTIONS") {
     if (!allowOrigin(request.headers.origin)) return json(response, 403, { ok: false, error: "Origin denied" });
+    if (!allowPreflight(request)) return json(response, 403, { ok: false, error: "Preflight denied" });
     response.writeHead(204);
     return response.end();
   }
@@ -116,7 +123,7 @@ server.listen(port, host, () => {
   process.stdout.write(`\nLumen Codex bridge v${BRIDGE_VERSION}\n`);
   process.stdout.write(`  URL:   http://${host}:${port}\n`);
   process.stdout.write(`  Codex: ${status}\n`);
-  process.stdout.write(`  Origin: ${allowedOrigin}\n`);
+  process.stdout.write(`  Origin: ${configuredOrigin || "Chrome extensions with a valid pairing token"}\n`);
   process.stdout.write("  Modes: reader, agent, unrestricted (selected per request)\n");
   if (process.env.LUMEN_BRIDGE_PRINT_TOKEN === "0") {
     process.stdout.write("  Pairing token: hidden; run `lumen-paper-bridge pair` locally to copy it.\n");
@@ -502,7 +509,18 @@ function setSecurityHeaders(request, response) {
 }
 
 function allowOrigin(origin) {
-  return origin === allowedOrigin;
+  if (typeof origin !== "string") return false;
+  return configuredOrigin ? origin === configuredOrigin : chromeExtensionOriginPattern.test(origin);
+}
+
+function allowPreflight(request) {
+  const requestedMethod = String(request.headers["access-control-request-method"] || "").toUpperCase();
+  if (!allowedPreflightMethods.has(requestedMethod)) return false;
+  const requestedHeaders = String(request.headers["access-control-request-headers"] || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return requestedHeaders.every((value) => allowedPreflightHeaders.has(value));
 }
 
 function parseBridgeOptions(argv) {
@@ -526,7 +544,7 @@ function bridgeCapabilities() {
     agent: true,
     unrestricted: true,
     workspace: "per-request",
-    origin: allowedOrigin,
+    origin: configuredOrigin || "chrome-extension://<extension-id>",
   };
 }
 

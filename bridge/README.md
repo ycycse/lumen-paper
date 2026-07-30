@@ -40,8 +40,9 @@ Bridge 负责连接本机 Codex；每次 AI 请求使用哪种权限，由 Lumen
 ## 本机边界
 
 - 只监听 `127.0.0.1`。
-- 只接受 Lumen 固定 extension origin。
+- 只接受格式严格的 Chrome extension origin；网页 origin、`null` 与畸形来源会被拒绝。
 - 每个请求还需要本机生成的 32-byte pairing token。
+- 如需把自建 Bridge 额外锁定到单个扩展，可在启动前显式设置 `LUMEN_EXTENSION_ID`；普通安装无需设置。
 - 安装版的 token 保存在稳定的用户 state 目录，升级 Bridge 不需要重新配对。
 - Bridge 在当前用户下后台运行；PID 与只含运行状态的日志保存在 state 目录，可用 `stop` 完整停止。
 

@@ -197,9 +197,10 @@ async function callCodexBridge(
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) {
-      const detail = legacyBridgeProfileError(String(data.error || ""))
+      const rawError = String(data.error || "");
+      const detail = legacyBridgeProfileError(rawError)
         ? "本机 Bridge 版本过旧。请重新运行设置页的安装命令；若旧 Bridge 仍占用终端，只需先 Ctrl-C 一次，再运行 lumen-paper-bridge start。"
-        : data.error || `Codex bridge ${response.status}`;
+        : bridgeResponseError(response.status, rawError) || `Codex bridge ${response.status}`;
       const error = response.status === 429
         ? "Codex 当前队列已满，请等待正在进行的解读完成后再试。"
         : detail;
@@ -260,7 +261,10 @@ async function listCodexModels(request: ModelListRequest): Promise<ModelListResp
       signal: controller.signal,
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) return { ok: false, error: data.error || `Bridge ${response.status}` };
+    if (!response.ok || !data.ok) {
+      const rawError = String(data.error || "");
+      return { ok: false, error: bridgeResponseError(response.status, rawError) || `Bridge ${response.status}` };
+    }
     const models = normalizeModelOptions({ data: data.models });
     return models.length
       ? { ok: true, models }
@@ -270,6 +274,16 @@ async function listCodexModels(request: ModelListRequest): Promise<ModelListResp
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function bridgeResponseError(status: number, rawError: string): string {
+  if (status === 403 && /origin denied/i.test(rawError)) {
+    return "当前 Bridge 不接受这份扩展。请重新运行设置页上方的安装命令更新 Bridge；pairing token 会保留。";
+  }
+  if (status === 401 && /invalid pairing token/i.test(rawError)) {
+    return "Pairing token 无效，请运行 lumen-paper-bridge pair 后重新粘贴。";
+  }
+  return rawError;
 }
 
 function normalizeContent(content: unknown): string {

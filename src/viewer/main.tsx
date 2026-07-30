@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { ViewerApp } from "./ViewerApp";
+import "katex/dist/katex.min.css";
 import "./viewer.css";
 
 GlobalWorkerOptions.workerSrc = pdfWorker;

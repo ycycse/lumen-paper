@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { createServer } from "node:net";
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { BRIDGE_PROTOCOL_VERSION, BRIDGE_VERSION } from "../bridge/version.mjs";
 
-const extensionId = "plekdghigijomceniepcgmfjpekcnkjf";
+const legacyExtensionId = "plekdghigijomceniepcgmfjpekcnkjf";
+const randomExtensionId = Array.from(randomBytes(32), (byte) => String.fromCharCode(97 + (byte & 0x0f))).join("");
 const root = mkdtempSync(join(tmpdir(), "lumen-bridge-smoke-"));
 const stateDir = join(root, "state");
 const codexStub = join(root, "codex-stub");
@@ -21,6 +23,15 @@ writeFileSync(codexStub, `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then sleep "\${LUMEN_TEST_STATUS_DELAY:-0}"; echo "codex-cli smoke"; exit 0; fi
 if [ "$1" = "login" ] && [ "$2" = "status" ]; then sleep "\${LUMEN_TEST_STATUS_DELAY:-0}"; echo "Logged in"; exit 0; fi
+if [ "$1" = "app-server" ] && [ "$2" = "--stdio" ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      *'"id":1'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}' ;;
+      *'"id":2'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"data":[{"id":"gpt-smoke","displayName":"GPT Smoke"}]}}'; exit 0 ;;
+    esac
+  done
+  exit 0
+fi
 printf '%s\n' "$@" > "$LUMEN_TEST_CODEX_ARGS"
 pwd > "$LUMEN_TEST_CODEX_CWD"
 cat > "$LUMEN_TEST_CODEX_STDIN"
@@ -52,9 +63,10 @@ try {
   const tokenPath = join(stateDir, ".token");
   await waitFor(() => existsSync(tokenPath), 5_000, "pairing token");
   const token = readFileSync(tokenPath, "utf8").trim();
-  const origin = `chrome-extension://${extensionId}`;
+  const legacyOrigin = `chrome-extension://${legacyExtensionId}`;
+  const randomOrigin = `chrome-extension://${randomExtensionId}`;
   const url = `http://127.0.0.1:${port}/health`;
-  const headers = { Origin: origin, "X-Lumen-Token": token };
+  const headers = { Origin: legacyOrigin, "X-Lumen-Token": token };
   const healthStartedAt = Date.now();
   const response = await waitForResponse(url, headers, 8_000);
   const healthElapsedMs = Date.now() - healthStartedAt;
@@ -71,12 +83,88 @@ try {
   ) throw new Error(`Bridge did not advertise all per-request profiles: ${JSON.stringify(health.capabilities)}`);
   if ((statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("Pairing token permissions must be 0600");
 
+  const randomOriginModels = await fetch(`http://127.0.0.1:${port}/v1/models`, {
+    headers: { ...headers, Origin: randomOrigin },
+  });
+  if (randomOriginModels.status !== 200) {
+    throw new Error(`Random valid Chrome extension origin returned ${randomOriginModels.status}, expected 200`);
+  }
+  if (randomOriginModels.headers.get("access-control-allow-origin") !== randomOrigin) {
+    throw new Error("Random valid Chrome extension origin was not echoed in Access-Control-Allow-Origin");
+  }
+  const randomOriginModelsBody = await randomOriginModels.json();
+  if (!randomOriginModelsBody.ok || randomOriginModelsBody.models?.[0]?.id !== "gpt-smoke") {
+    throw new Error(`Unexpected model response for random valid Chrome extension origin: ${JSON.stringify(randomOriginModelsBody)}`);
+  }
+
   const wrongOrigin = await fetch(url, { headers: { ...headers, Origin: "https://example.com" } });
   if (wrongOrigin.status !== 403) throw new Error(`Wrong origin returned ${wrongOrigin.status}, expected 403`);
-  const wrongToken = await fetch(url, { headers: { ...headers, "X-Lumen-Token": "not-the-token" } });
+  if (wrongOrigin.headers.has("access-control-allow-origin")) throw new Error("Wrong origin received an Access-Control-Allow-Origin header");
+  const malformedOrigins = [
+    `chrome-extension://${"a".repeat(31)}`,
+    `chrome-extension://${"a".repeat(33)}`,
+    `chrome-extension://${"q".repeat(32)}`,
+    `${randomOrigin}/path`,
+    `${randomOrigin}:43177`,
+    "null",
+  ];
+  for (const origin of malformedOrigins) {
+    const malformed = await fetch(url, { headers: { ...headers, Origin: origin } });
+    if (malformed.status !== 403 || malformed.headers.has("access-control-allow-origin")) {
+      throw new Error(`Malformed extension origin was not rejected: ${origin}`);
+    }
+  }
+  const missingOrigin = await fetch(url, { headers: { "X-Lumen-Token": token } });
+  if (missingOrigin.status !== 403 || missingOrigin.headers.has("access-control-allow-origin")) {
+    throw new Error("Missing Origin was not rejected");
+  }
+  const wrongToken = await fetch(url, {
+    headers: { ...headers, Origin: randomOrigin, "X-Lumen-Token": "not-the-token" },
+  });
   if (wrongToken.status !== 401) throw new Error(`Wrong token returned ${wrongToken.status}, expected 401`);
 
-  const reader = await chat(headers, { mode: "reader", runtimePrompt: "reader smoke" });
+  const preflight = await fetch(`http://127.0.0.1:${port}/v1/models`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: randomOrigin,
+      "Access-Control-Request-Method": "GET",
+      "Access-Control-Request-Headers": "X-Lumen-Token",
+    },
+  });
+  if (preflight.status !== 204) throw new Error(`Valid extension preflight returned ${preflight.status}, expected 204`);
+  if (preflight.headers.get("access-control-allow-origin") !== randomOrigin) {
+    throw new Error("Valid extension preflight did not echo its Origin");
+  }
+  if (!headerIncludes(preflight, "access-control-allow-methods", "GET")) {
+    throw new Error("Valid extension preflight did not allow GET");
+  }
+  if (!headerIncludes(preflight, "access-control-allow-headers", "X-Lumen-Token")) {
+    throw new Error("Valid extension preflight did not allow X-Lumen-Token");
+  }
+  if (preflight.headers.has("access-control-allow-credentials")) {
+    throw new Error("Bridge preflight must not allow credentials");
+  }
+
+  for (const headers of [
+    { Origin: randomOrigin, "Access-Control-Request-Method": "DELETE" },
+    { Origin: randomOrigin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "X-Unexpected" },
+  ]) {
+    const deniedPreflight = await fetch(`http://127.0.0.1:${port}/v1/models`, { method: "OPTIONS", headers });
+    if (deniedPreflight.status !== 403) throw new Error(`Unexpected preflight was not rejected: ${JSON.stringify(headers)}`);
+  }
+
+  const wrongOriginPreflight = await fetch(`http://127.0.0.1:${port}/v1/models`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://example.com", "Access-Control-Request-Method": "GET" },
+  });
+  if (wrongOriginPreflight.status !== 403) {
+    throw new Error(`Wrong-origin preflight returned ${wrongOriginPreflight.status}, expected 403`);
+  }
+  if (wrongOriginPreflight.headers.has("access-control-allow-origin")) {
+    throw new Error("Wrong-origin preflight received an Access-Control-Allow-Origin header");
+  }
+
+  const reader = await chat({ ...headers, Origin: randomOrigin }, { mode: "reader", runtimePrompt: "reader smoke" });
   assertOk(reader, "Reader request");
   if (
     reader.body.runtime?.mode !== "reader"
@@ -253,4 +341,11 @@ function assertArgPair(args, option, value, label) {
   if (index < 0 || args[index + 1] !== value) {
     throw new Error(`${label} expected ${JSON.stringify([option, value])}: ${JSON.stringify(args)}`);
   }
+}
+
+function headerIncludes(response, name, expectedValue) {
+  return (response.headers.get(name) || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .includes(expectedValue.toLowerCase());
 }

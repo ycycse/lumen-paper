@@ -31,7 +31,7 @@ fi
 export LUMEN_BRIDGE_STATE_DIR="${LUMEN_BRIDGE_STATE_DIR:-$DEFAULT_STATE_DIR}"
 export LUMEN_BRIDGE_HOST="${LUMEN_BRIDGE_HOST:-127.0.0.1}"
 export LUMEN_BRIDGE_PORT="${LUMEN_BRIDGE_PORT:-43177}"
-export LUMEN_EXTENSION_ID="${LUMEN_EXTENSION_ID:-plekdghigijomceniepcgmfjpekcnkjf}"
+HEALTH_EXTENSION_ID="${LUMEN_EXTENSION_ID:-plekdghigijomceniepcgmfjpekcnkjf}"
 
 TOKEN_PATH="$LUMEN_BRIDGE_STATE_DIR/.token"
 PID_PATH="$LUMEN_BRIDGE_STATE_DIR/bridge.pid"
@@ -174,7 +174,7 @@ health() {
   HEALTH_HOST="$LUMEN_BRIDGE_HOST"
   if [ "$HEALTH_HOST" = "::1" ]; then HEALTH_HOST="[::1]"; fi
   curl --noproxy '*' --connect-timeout 1 --max-time 2 --proto '=http' -fsS \
-    -H "Origin: chrome-extension://${LUMEN_EXTENSION_ID}" \
+    -H "Origin: chrome-extension://${HEALTH_EXTENSION_ID}" \
     -H "X-Lumen-Token: $(token_value)" \
     "http://${HEALTH_HOST}:${LUMEN_BRIDGE_PORT}/health"
 }

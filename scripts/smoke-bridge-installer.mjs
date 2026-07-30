@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from "node:net";
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -19,6 +20,7 @@ const curlStub = join(root, "curl-stub");
 const codexStub = join(root, "codex-stub");
 const pbcopyStub = join(binDir, "pbcopy");
 const port = await freePort();
+const randomExtensionOrigin = `chrome-extension://${Array.from(randomBytes(32), (byte) => String.fromCharCode(97 + (byte & 0x0f))).join("")}`;
 mkdirSync(binDir, { recursive: true });
 
 if (!existsSync(archive) || !existsSync(installer)) {
@@ -88,6 +90,7 @@ try {
     || health.capabilities?.agent !== true
     || health.capabilities?.unrestricted !== true
   ) throw new Error(`Unexpected installed Bridge health: ${JSON.stringify(health)}`);
+  await assertInstalledExtensionOrigin(firstToken, randomExtensionOrigin);
 
   const status = run(command, ["status"], env);
   if (!status.stdout.includes("PID") || !status.stdout.includes("Log:")) {
@@ -219,4 +222,16 @@ async function waitForHealth(token, timeoutMs) {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 80));
   }
   throw new Error("Timed out waiting for the installed background Bridge");
+}
+
+async function assertInstalledExtensionOrigin(token, origin) {
+  const response = await fetch(`http://127.0.0.1:${port}/health`, {
+    headers: { Origin: origin, "X-Lumen-Token": token },
+  });
+  if (response.status !== 200) {
+    throw new Error(`Installed Bridge rejected random valid Chrome extension origin with ${response.status}`);
+  }
+  if (response.headers.get("access-control-allow-origin") !== origin) {
+    throw new Error("Installed Bridge did not echo the random valid Chrome extension origin");
+  }
 }
