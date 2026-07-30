@@ -17,7 +17,7 @@ import type { AiResponse, LumenSettings, ModelListResponse, ModelOption, Provide
 
 type TestState = "idle" | "testing" | "ok" | "error";
 type CatalogState = "idle" | "loading" | "ok" | "error";
-const BRIDGE_INSTALL_COMMAND = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/ycycse/lumen-paper/releases/download/v0.1.18/install-lumen-paper-bridge.sh | bash";
+const BRIDGE_INSTALL_COMMAND = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/ycycse/lumen-paper/releases/latest/download/install-lumen-paper-bridge.sh | bash";
 
 export function OptionsApp() {
   const [settings, setSettings] = useState<LumenSettings>(DEFAULT_SETTINGS);
