@@ -101,7 +101,14 @@ npm run build
 
 ## Codex Bridge
 
-Bridge 将扩展请求转发给本机 Codex CLI，只监听 `127.0.0.1`。使用 API 模式时不需要安装。Bridge 安装包随 Release 提供；如果 Latest Release 尚未包含，可从源码运行 `npm run bridge`。
+Bridge 将扩展请求转发给本机 Codex CLI，只监听 `127.0.0.1`。使用 API 模式时不需要安装。
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/ycycse/lumen-paper/releases/latest/download/install-lumen-paper-bridge.sh | bash
+```
+
+安装脚本不使用 `sudo`，会校验固定版本的 Bridge 包并安装到用户目录。
 
 安装后常用命令：
 

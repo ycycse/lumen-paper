@@ -4,6 +4,7 @@
 
 - Added a standalone Codex Bridge Release bundle that runs without cloning the repository or installing npm dependencies.
 - Added a checksum-pinned, no-sudo installer and a transparent macOS `.command` launcher for foreground Reader mode.
+- Made the in-extension installer command follow the Latest Release instead of a fixed version URL.
 - Moved the pairing token into a stable user state directory for install-based upgrades.
 - Added Bridge version/protocol receipts, friendly port validation, loopback/auth smoke coverage and automated tag releases.
 - Replaced source-directory Bridge commands in the settings page with the installed `lumen-paper-bridge` command.
