@@ -15,6 +15,7 @@ export interface LumenSettings {
   codexWebSearch: boolean;
   codexCalculations: boolean;
   codexPermissionMode: CodexPermissionMode;
+  codexWorkspace: string;
   chatMode: ChatMode;
   autoOpenPdfs: boolean;
   autoAnalyze: boolean;

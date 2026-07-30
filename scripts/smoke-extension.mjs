@@ -86,6 +86,7 @@ const smokeAnswer = [
   "建议先读主结果表，再回到方法假设。[[p:1]]",
 ].join("\n");
 let lastApiOrigin = "";
+const bridgeRequestBodies = [];
 mkdirSync(resolve("work"), { recursive: true });
 
 if (!existsSync(pdfPath)) throw new Error(`Missing smoke PDF: ${pdfPath}`);
@@ -95,7 +96,7 @@ const pdfServer = createServer((request, response) => {
     response.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Lumen-Token",
     });
     response.end();
   } else if (request.url === "/paper.pdf") {
@@ -105,6 +106,15 @@ const pdfServer = createServer((request, response) => {
     lastApiOrigin = String(request.headers.origin || "");
     response.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
     response.end(JSON.stringify({ choices: [{ message: { content: smokeAnswer } }] }));
+  } else if (request.url === "/v1/chat" && request.method === "POST") {
+    void readJsonBody(request).then((body) => {
+      bridgeRequestBodies.push(body);
+      response.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      response.end(JSON.stringify({ ok: true, content: smokeAnswer }));
+    }).catch((error) => {
+      response.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      response.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    });
   } else if (request.url === "/v1/models" && request.method === "GET") {
     response.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
     response.end(JSON.stringify({ data: [
@@ -182,6 +192,38 @@ try {
   await cdp.send("Log.enable");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 
+  const summaryRuntimeProbe = await cdp.evaluate(`(async () => {
+    const key = 'lumen.settings';
+    const stored = await chrome.storage.local.get(key);
+    await chrome.storage.local.set({ [key]: {
+      ...stored[key],
+      provider: 'codex',
+      bridgeUrl: ${JSON.stringify(`http://127.0.0.1:${pdfPort}`)},
+      bridgeToken: 'smoke-bridge-token',
+      codexPermissionMode: 'unrestricted',
+      codexWorkspace: '/tmp/must-not-reach-summary'
+    } });
+    const response = await chrome.runtime.sendMessage({
+      type: 'AI_REQUEST',
+      payload: {
+        system: 'Summary isolation probe',
+        messages: [{ role: 'user', content: 'Summarize safely.' }],
+        purpose: 'summary'
+      }
+    });
+    await chrome.storage.local.set({ [key]: stored[key] });
+    return response;
+  })()`);
+  await waitFor(() => bridgeRequestBodies.length === 1, 5_000, "summary Reader request body");
+  const summaryAgent = bridgeRequestBodies[0]?.agent;
+  if (
+    !summaryRuntimeProbe?.ok
+    || summaryAgent?.mode !== "reader"
+    || Object.prototype.hasOwnProperty.call(summaryAgent || {}, "workspace")
+  ) {
+    throw new Error(`Automatic summary escaped Reader isolation: ${JSON.stringify({ response: summaryRuntimeProbe, agent: summaryAgent })}`);
+  }
+
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2500));
   const diagnostic = await cdp.evaluate(`(() => ({
     href: location.href,
@@ -210,6 +252,7 @@ try {
     provider: document.querySelector('.provider-chip-label')?.textContent,
     bodyWidth: document.body.getBoundingClientRect().width
   }))()`);
+  metrics.summaryRuntime = { mode: summaryAgent.mode, workspaceSent: false };
   if (!metrics.pages || !metrics.canvasWidth || !metrics.textSpans || !metrics.panel || !metrics.tabTitle?.endsWith(' · Lumen')) {
     throw new Error(`Incomplete reader render: ${JSON.stringify(metrics)}`);
   }
@@ -454,7 +497,7 @@ try {
   await optionsCdp.ready;
   await optionsCdp.send("Runtime.enable");
   await optionsCdp.send("Page.enable");
-  await optionsCdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await optionsCdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1250, deviceScaleFactor: 1, mobile: false });
   await waitFor(async () => Number(await optionsCdp.evaluate(`document.querySelectorAll('.model-picker').length`)) === 2, 8_000, "model pickers");
   const migratedModels = await optionsCdp.evaluate(`[...document.querySelectorAll('.model-picker > input')].map((input) => input.value)`);
   await optionsCdp.evaluate(`document.querySelector('.model-picker > input')?.click()`);
@@ -474,10 +517,46 @@ try {
   await optionsCdp.evaluate(`document.querySelectorAll('.provider-card')[1]?.click()`);
   await waitFor(async () => Number(await optionsCdp.evaluate(`document.querySelectorAll('.codex-tool-list .toggle-row').length`)) === 2, 5_000, "Codex agent tool toggles");
   metrics.codexAgentTools = await optionsCdp.evaluate(`[...document.querySelectorAll('.codex-tool-list .toggle-row')].map((row) => ({ label: row.querySelector('strong')?.textContent, checked: row.querySelector('input')?.checked }))`);
-  metrics.permissionProfiles = await optionsCdp.evaluate(`[...document.querySelectorAll('.permission-card')].map((card) => ({ label: card.querySelector('strong')?.textContent, disabled: card.disabled }))`);
+  metrics.bridgeService = await optionsCdp.evaluate(`(() => {
+    const setup = document.querySelector('.codex-setup');
+    const serviceCommands = [...document.querySelectorAll('.bridge-service code')].map((item) => item.textContent?.trim());
+    const copy = setup?.textContent || '';
+    return {
+      serviceCommands,
+      hasAgentStartCommand: /lumen-paper-bridge\\s+agent/.test(copy),
+      hasFullStartCommand: /lumen-paper-bridge\\s+full/.test(copy),
+      hasLegacyPackageCommand: /bridge:(agent|full)/.test(copy)
+    };
+  })()`);
+  if (
+    metrics.bridgeService.serviceCommands.length !== 1 ||
+    metrics.bridgeService.serviceCommands[0] !== '~/.local/bin/lumen-paper-bridge start' ||
+    metrics.bridgeService.hasAgentStartCommand ||
+    metrics.bridgeService.hasFullStartCommand ||
+    metrics.bridgeService.hasLegacyPackageCommand
+  ) {
+    throw new Error(`Single Bridge start contract failed: ${JSON.stringify(metrics.bridgeService)}`);
+  }
+  metrics.permissionModes = await optionsCdp.evaluate(`[...document.querySelectorAll('.permission-card')].map((card) => ({ label: card.querySelector('strong')?.textContent, disabled: card.disabled }))`);
+  await optionsCdp.evaluate(`document.querySelectorAll('.permission-card')[1]?.click()`);
+  await waitFor(async () => Boolean(await optionsCdp.evaluate(`Boolean(document.querySelector('.codex-workspace input'))`)), 5_000, "Agent workspace input");
+  await optionsCdp.evaluate(`(() => {
+    const input = document.querySelector('.codex-workspace input');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (!input || !setter) return false;
+    setter.call(input, '/tmp/lumen-workspace');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await optionsCdp.evaluate(`document.querySelector('.save-button')?.click()`);
+  await waitFor(async () => (await optionsCdp.evaluate(`document.querySelector('.save-button')?.textContent`)).includes('已保存'), 5_000, "saved Agent workspace");
+  metrics.agentWorkspace = await optionsCdp.evaluate(`chrome.storage.local.get('lumen.settings').then((result) => ({ mode: result['lumen.settings'].codexPermissionMode, workspace: result['lumen.settings'].codexWorkspace }))`);
+  if (metrics.agentWorkspace.mode !== 'agent' || metrics.agentWorkspace.workspace !== '/tmp/lumen-workspace') {
+    throw new Error(`Agent workspace was not persisted: ${JSON.stringify(metrics.agentWorkspace)}`);
+  }
   metrics.promptEditors = await optionsCdp.evaluate(`document.querySelectorAll('.prompt-editor').length`);
-  if (metrics.permissionProfiles.length !== 3 || metrics.promptEditors !== 10) {
-    throw new Error(`Prompt Studio or permission profiles missing: ${JSON.stringify({ profiles: metrics.permissionProfiles, prompts: metrics.promptEditors })}`);
+  if (metrics.permissionModes.length !== 3 || metrics.promptEditors !== 10) {
+    throw new Error(`Prompt Studio or permission modes missing: ${JSON.stringify({ modes: metrics.permissionModes, prompts: metrics.promptEditors })}`);
   }
   const optionsScreenshotPath = resolve("work/smoke-model-settings.png");
   const optionsCapture = await optionsCdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
@@ -498,6 +577,18 @@ try {
   pdfServer.close();
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
   rmSync(profileDir, { recursive: true, force: true });
+}
+
+function readJsonBody(request) {
+  return new Promise((resolvePromise, reject) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      try { resolvePromise(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+      catch (error) { reject(error); }
+    });
+    request.on("error", reject);
+  });
 }
 
 async function targets(port) {

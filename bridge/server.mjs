@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -40,6 +40,7 @@ if (bridgeOptions.printToken) {
 }
 const jobsByFingerprint = new Map();
 let modelsCache = { expiresAt: 0, models: [] };
+let codexStatusCache = { value: "checking", expiresAt: 0, refreshing: false };
 
 const server = createServer(async (request, response) => {
   setSecurityHeaders(request, response);
@@ -61,7 +62,7 @@ const server = createServer(async (request, response) => {
         id,
         activeForMs: Date.now() - startedAt,
       })),
-      codex: codexStatus(),
+      codex: cachedCodexStatus(),
       capabilities: bridgeCapabilities(),
     });
   }
@@ -94,6 +95,9 @@ const server = createServer(async (request, response) => {
         retryAfterMs: 3000,
       });
     }
+    if (error instanceof RequestValidationError || error instanceof SyntaxError) {
+      return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
     return json(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -108,13 +112,12 @@ server.on("error", (error) => {
 });
 
 server.listen(port, host, () => {
-  const status = codexStatus();
+  const status = cachedCodexStatus();
   process.stdout.write(`\nLumen Codex bridge v${BRIDGE_VERSION}\n`);
   process.stdout.write(`  URL:   http://${host}:${port}\n`);
   process.stdout.write(`  Codex: ${status}\n`);
   process.stdout.write(`  Origin: ${allowedOrigin}\n`);
-  process.stdout.write(`  Modes: reader${bridgeOptions.allowAgent ? ", agent" : ""}${bridgeOptions.allowUnrestricted ? ", unrestricted" : ""}\n`);
-  if (bridgeOptions.workspace) process.stdout.write(`  Agent workspace: ${bridgeOptions.workspace}\n`);
+  process.stdout.write("  Modes: reader, agent, unrestricted (selected per request)\n");
   if (process.env.LUMEN_BRIDGE_PRINT_TOKEN === "0") {
     process.stdout.write("  Pairing token: hidden; run `lumen-paper-bridge pair` locally to copy it.\n");
   } else {
@@ -143,12 +146,51 @@ function validatedToken(value, source) {
   return normalized;
 }
 
-function codexStatus() {
-  const version = spawnSync(codexBin, ["--version"], { encoding: "utf8", timeout: 5000 });
-  if (version.error) return `not found (${version.error.message})`;
-  const auth = spawnSync(codexBin, ["login", "status"], { encoding: "utf8", timeout: 8000 });
-  const authText = `${auth.stdout || ""} ${auth.stderr || ""}`.trim();
-  return `${String(version.stdout || version.stderr).trim()} · ${authText || "auth unknown"}`;
+function cachedCodexStatus() {
+  if (codexStatusCache.expiresAt <= Date.now() && !codexStatusCache.refreshing) {
+    void refreshCodexStatus();
+  }
+  return codexStatusCache.value;
+}
+
+async function refreshCodexStatus() {
+  codexStatusCache.refreshing = true;
+  try {
+    const version = await captureCodex(["--version"], 5_000);
+    const auth = await captureCodex(["login", "status"], 8_000);
+    const authText = `${auth.stdout} ${auth.stderr}`.trim();
+    codexStatusCache.value = `${(version.stdout || version.stderr).trim()} · ${authText || "auth unknown"}`;
+    codexStatusCache.expiresAt = Date.now() + 60_000;
+  } catch (error) {
+    codexStatusCache.value = `unavailable (${error instanceof Error ? error.message : String(error)})`;
+    codexStatusCache.expiresAt = Date.now() + 15_000;
+  } finally {
+    codexStatusCache.refreshing = false;
+  }
+}
+
+function captureCodex(args, timeoutMs) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(codexBin, args, { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(new Error(`codex ${args.join(" ")} timed out`));
+    }, timeoutMs);
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolvePromise({ stdout, stderr });
+    };
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", finish);
+    child.on("close", (code) => finish(code === 0 ? null : new Error(`codex ${args.join(" ")} exited ${code}`)));
+  });
 }
 
 async function listCodexModels() {
@@ -222,26 +264,53 @@ function queryCodexModels() {
 }
 
 function validateBody(body) {
-  if (!body || typeof body !== "object") throw new Error("Invalid JSON body");
-  if (typeof body.system !== "string" || body.system.length > 20_000) throw new Error("Invalid system prompt");
-  if (!Array.isArray(body.messages) || body.messages.length > 16) throw new Error("Invalid messages");
+  if (!body || typeof body !== "object") throw new RequestValidationError("Invalid JSON body");
+  if (typeof body.system !== "string" || body.system.length > 20_000) throw new RequestValidationError("Invalid system prompt");
+  if (!Array.isArray(body.messages) || body.messages.length > 16) throw new RequestValidationError("Invalid messages");
   for (const message of body.messages) {
     if (!message || !["user", "assistant"].includes(message.role) || typeof message.content !== "string") {
-      throw new Error("Invalid message");
+      throw new RequestValidationError("Invalid message");
     }
   }
-  if (body.model != null && !/^[a-zA-Z0-9._:-]{1,100}$/.test(body.model)) throw new Error("Invalid model name");
+  if (body.model != null && !/^[a-zA-Z0-9._:-]{1,100}$/.test(body.model)) throw new RequestValidationError("Invalid model name");
   if (body.tools != null && (
     typeof body.tools !== "object"
     || (body.tools.webSearch != null && typeof body.tools.webSearch !== "boolean")
     || (body.tools.calculations != null && typeof body.tools.calculations !== "boolean")
-  )) throw new Error("Invalid tool policy");
+  )) throw new RequestValidationError("Invalid tool policy");
   if (body.agent != null && (
     typeof body.agent !== "object"
     || !["reader", "agent", "unrestricted"].includes(body.agent.mode)
+    || (body.agent.workspace != null && (typeof body.agent.workspace !== "string" || body.agent.workspace.length > 4096))
     || (body.agent.runtimePrompt != null && (typeof body.agent.runtimePrompt !== "string" || body.agent.runtimePrompt.length > 20_000))
-  )) throw new Error("Invalid agent profile");
-  assertModeAllowed(body.agent?.mode || "reader");
+  )) throw new RequestValidationError("Invalid agent profile");
+  validateRequestWorkspace(body);
+}
+
+function validateRequestWorkspace(body) {
+  const mode = body.agent?.mode || "reader";
+  const requestedWorkspace = body.agent?.workspace;
+  if (mode === "reader") {
+    if (requestedWorkspace != null && requestedWorkspace.trim()) {
+      throw new RequestValidationError("Reader mode does not accept agent.workspace");
+    }
+    return;
+  }
+  if (typeof requestedWorkspace !== "string" || !requestedWorkspace.trim()) {
+    throw new RequestValidationError("Agent and Full Agent require agent.workspace with an existing absolute directory");
+  }
+  if (!isAbsolute(requestedWorkspace)) {
+    throw new RequestValidationError("agent.workspace must be an absolute path");
+  }
+  let workspace;
+  try {
+    workspace = realpathSync(requestedWorkspace);
+    if (!statSync(workspace).isDirectory()) throw new Error("not a directory");
+  } catch {
+    throw new RequestValidationError("agent.workspace must point to an existing directory");
+  }
+  if (dirname(workspace) === workspace) throw new RequestValidationError("agent.workspace must not be a filesystem root");
+  body.agent.workspace = workspace;
 }
 
 function scheduleCodex(body) {
@@ -290,6 +359,7 @@ function scheduleCodex(body) {
 }
 
 class QueueFullError extends Error {}
+class RequestValidationError extends Error {}
 
 function requestChars(body) {
   return body.system.length + body.messages.reduce((total, message) => total + message.content.length, 0);
@@ -305,8 +375,8 @@ function log(message) {
 
 function runCodex(body) {
   const mode = body.agent?.mode || "reader";
-  const ownsWorkdir = mode === "reader" || !bridgeOptions.workspace;
-  const workdir = ownsWorkdir ? mkdtempSync(join(tmpdir(), "lumen-codex-")) : bridgeOptions.workspace;
+  const ownsWorkdir = mode === "reader";
+  const workdir = ownsWorkdir ? mkdtempSync(join(tmpdir(), "lumen-codex-")) : body.agent.workspace;
   const webSearch = body.tools?.webSearch !== false;
   const args = [];
   if (webSearch) args.push("--search");
@@ -436,45 +506,26 @@ function allowOrigin(origin) {
 }
 
 function parseBridgeOptions(argv) {
-  let allowAgent = false;
-  let allowUnrestricted = false;
   let printToken = false;
-  let workspace = "";
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--allow-agent") allowAgent = true;
+    if (argument === "--allow-agent") continue;
     else if (argument === "--print-token") printToken = true;
-    else if (argument === "--allow-unrestricted") {
-      allowAgent = true;
-      allowUnrestricted = true;
-    } else if (argument === "--workspace") {
-      workspace = argv[index + 1] || "";
+    else if (argument === "--allow-unrestricted") continue;
+    else if (argument === "--workspace") {
+      if (!argv[index + 1]) throw new Error("--workspace requires a path");
       index += 1;
     } else throw new Error(`Unknown bridge option: ${argument}`);
   }
-  if (workspace) {
-    if (!isAbsolute(workspace)) throw new Error("--workspace must be an absolute path");
-    workspace = realpathSync(workspace);
-    if (!statSync(workspace).isDirectory()) throw new Error("--workspace must point to a directory");
-  }
-  return { allowAgent, allowUnrestricted, workspace, printToken };
-}
-
-function assertModeAllowed(mode) {
-  if (mode === "agent" && !bridgeOptions.allowAgent) {
-    throw new Error("Agent mode is locked. Restart with: npm run bridge:agent");
-  }
-  if (mode === "unrestricted" && !bridgeOptions.allowUnrestricted) {
-    throw new Error("Full Agent is locked. Restart with: npm run bridge:full");
-  }
+  return { printToken };
 }
 
 function bridgeCapabilities() {
   return {
     reader: true,
-    agent: bridgeOptions.allowAgent,
-    unrestricted: bridgeOptions.allowUnrestricted,
-    workspace: bridgeOptions.workspace || null,
+    agent: true,
+    unrestricted: true,
+    workspace: "per-request",
     origin: allowedOrigin,
   };
 }

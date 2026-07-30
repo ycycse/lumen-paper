@@ -108,7 +108,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/ycycse/lumen-paper/releases/latest/download/install-lumen-paper-bridge.sh | bash
 ```
 
-安装脚本不使用 `sudo`，会校验固定版本的 Bridge 包并安装到用户目录。
+安装脚本不使用 `sudo`，会校验固定版本的 Bridge 包、安装到用户目录，并在后台启动唯一的 Bridge 进程。命令完成后会自动复制 pairing token，并立即把终端还给你。
 
 安装后常用命令：
 
@@ -116,17 +116,21 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 ~/.local/bin/lumen-paper-bridge start
 ~/.local/bin/lumen-paper-bridge status
 ~/.local/bin/lumen-paper-bridge pair
+~/.local/bin/lumen-paper-bridge restart
+~/.local/bin/lumen-paper-bridge stop
 ```
 
-首次启动会在 macOS 自动复制 pairing token。升级不会更换 token。
+首次启动会在 macOS 自动复制 pairing token。升级会安全重启由安装版管理的 Bridge，但不会更换 token。
 
-| Profile | 权限 |
+Bridge 不再有三套启动模式。Reader、Agent 和 Full Agent 都在 Lumen 设置页选择，下一次交流立即生效，无需重启本机进程。
+
+| 页面 Profile | 权限 |
 |---|---|
-| Reader | 默认，只读临时目录 |
-| Agent | 加载 Codex 配置和工具，可写指定 workspace |
-| Full Agent | 无 sandbox、无审批，需在 Bridge 端显式解锁 |
+| Reader | 只读临时目录 |
+| Agent | 加载 Codex 配置和工具，可写页面中指定的 workspace |
+| Full Agent | 无 sandbox、无审批；需在页面明确确认 |
 
-Full Agent 仅应用于可信任务和 workspace。源码启动和权限说明见 [Bridge README](bridge/README.md)。
+Full Agent 不等于 root，也不需要 `sudo`；它仍以当前用户身份运行。仅用于可信任务和 workspace。运行方式与权限边界见 [Bridge README](bridge/README.md)。
 
 ## 数据与隐私
 

@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: LumenSettings = {
   codexWebSearch: true,
   codexCalculations: true,
   codexPermissionMode: "reader",
+  codexWorkspace: "",
   chatMode: "research",
   autoOpenPdfs: true,
   autoAnalyze: true,
@@ -77,6 +78,9 @@ export function normalizeSettings(value: unknown): LumenSettings {
     codexPermissionMode: ["reader", "agent", "unrestricted"].includes(String(current.codexPermissionMode))
       ? current.codexPermissionMode as LumenSettings["codexPermissionMode"]
       : DEFAULT_SETTINGS.codexPermissionMode,
+    codexWorkspace: typeof current.codexWorkspace === "string"
+      ? current.codexWorkspace
+      : DEFAULT_SETTINGS.codexWorkspace,
     chatMode: current.chatMode === "paper" ? "paper" : DEFAULT_SETTINGS.chatMode,
     summaryPrompt: current.summaryPrompt ?? DEFAULT_SETTINGS.summaryPrompt,
     paperSystemPrompt: current.paperSystemPrompt ?? DEFAULT_SETTINGS.paperSystemPrompt,

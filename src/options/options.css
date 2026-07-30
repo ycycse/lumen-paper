@@ -67,6 +67,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .bridge-install-command code { min-width: 0; overflow-x: auto; white-space: nowrap; }
 .bridge-install-command button { height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid rgba(220,232,169,.2); border-radius: 7px; background: rgba(220,232,169,.09); color: #dce8a9; font-size: 8px; cursor: pointer; }
 .bridge-install-command button:hover { border-color: rgba(220,232,169,.42); background: rgba(220,232,169,.14); }
+.bridge-service { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin: 15px 0 2px; padding: 11px 12px; border: 1px solid rgba(220,232,169,.15); border-radius: 10px; background: rgba(220,232,169,.055); }
+.bridge-service strong, .bridge-service small { display: block; }
+.bridge-service strong { margin-bottom: 4px; color: #edf1e4; font-size: 10px; }
+.bridge-service small { color: #9fa79a; font-size: 8px; line-height: 1.45; }
+.bridge-service code { padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,.07); color: #d8e7a0; font-size: 9px; white-space: nowrap; }
 .codex-setup .field-grid { margin-top: 18px; }
 .codex-setup .field > span { color: #bbc0b6; }
 .codex-setup .field input { border-color: rgba(255,255,255,.12); background: #30342b; color: #f3f5ed; }
@@ -97,12 +102,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .permission-card strong { font-size: 10px; }
 .permission-card em { padding: 3px 5px; border-radius: 5px; background: rgba(255,255,255,.08); color: #bdc5b7; font-size: 7px; font-style: normal; }
 .permission-card small { color: #aeb5a8; font-size: 8px; line-height: 1.48; }
+.codex-workspace { margin-top: 11px; padding: 12px; border: 1px solid rgba(220,232,169,.14); border-radius: 10px; background: rgba(255,255,255,.035); }
+.codex-workspace input[aria-invalid="true"] { border-color: #d98e72; box-shadow: 0 0 0 3px rgba(217,142,114,.1); }
+.codex-workspace > small { display: block; margin-top: 7px; color: #9da59a; font-size: 8px; line-height: 1.5; }
 .danger-confirm { display: flex; align-items: flex-start; gap: 8px; margin-top: 11px; color: #c5b6ae; font-size: 8px; line-height: 1.45; cursor: pointer; }
 .danger-confirm input { flex: none; margin: 1px 0 0; accent-color: #d98e72; }
-.bridge-command { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 11px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: rgba(255,255,255,.035); }
-.bridge-command span { color: #9ea69a; font-size: 8px; }
-.bridge-command code { overflow-x: auto; color: #d9e7a3; font-size: 8px; white-space: nowrap; }
-.bridge-command.danger code { color: #efad96; }
 .codex-tool-list { margin-top: 16px; border-top: 1px solid rgba(255,255,255,.09); }
 .codex-tool-list .toggle-row { min-height: 61px; border-color: rgba(255,255,255,.08); }
 .codex-tool-list .toggle-row strong { color: #edf0e6; }
@@ -156,7 +160,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (max-width: 760px) {
   .permission-grid { grid-template-columns: 1fr; }
-  .bridge-command { grid-template-columns: 1fr; }
+  .bridge-service { grid-template-columns: 1fr; }
+  .bridge-service code { overflow-x: auto; }
   .prompt-studio-note { grid-template-columns: 18px 1fr; }
   .prompt-studio-note button { grid-column: 2; justify-self: start; }
 }

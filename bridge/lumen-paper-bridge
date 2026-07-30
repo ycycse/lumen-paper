@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
+
+if [ -n "${SUDO_USER:-}" ]; then
+  printf 'Do not run Lumen Paper Bridge with sudo. Run the same command as your normal user.\n' >&2
+  exit 1
+fi
 
 if [ -z "${HOME:-}" ]; then
   printf 'HOME is required to store the Bridge pairing state.\n' >&2
   exit 1
 fi
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:${HOME:-}/.local/bin:${PATH:-/usr/bin:/bin}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:${HOME}/.local/bin:${PATH:-/usr/bin:/bin}"
 
 SOURCE_PATH="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE_PATH" ]; do
@@ -28,26 +34,102 @@ export LUMEN_BRIDGE_PORT="${LUMEN_BRIDGE_PORT:-43177}"
 export LUMEN_EXTENSION_ID="${LUMEN_EXTENSION_ID:-plekdghigijomceniepcgmfjpekcnkjf}"
 
 TOKEN_PATH="$LUMEN_BRIDGE_STATE_DIR/.token"
+PID_PATH="$LUMEN_BRIDGE_STATE_DIR/bridge.pid"
+SERVER_PATH_PATH="$LUMEN_BRIDGE_STATE_DIR/bridge.server-path"
+LOG_PATH="$LUMEN_BRIDGE_STATE_DIR/bridge.log"
+LIFECYCLE_LOCK_PATH="$LUMEN_BRIDGE_STATE_DIR/bridge.lifecycle.lock"
 NODE_BIN="${LUMEN_NODE_BIN:-$(command -v node || true)}"
 CODEX_BIN="${LUMEN_CODEX_BIN:-$(command -v codex || true)}"
 BRIDGE_VERSION="$(sed -n 's/^export const BRIDGE_VERSION = "\(.*\)";$/\1/p' "$BRIDGE_DIR/version.mjs")"
 BRIDGE_PROTOCOL_VERSION="$(sed -n 's/^export const BRIDGE_PROTOCOL_VERSION = \([0-9][0-9]*\);$/\1/p' "$BRIDGE_DIR/version.mjs")"
+MANAGED_PID=""
+MANAGED_SERVER_PATH=""
+LIFECYCLE_LOCK_KIND=""
 
 usage() {
   cat <<'EOF'
 Lumen Paper Codex Bridge
 
 Usage:
-  lumen-paper-bridge [start]                  Start the read-only Reader Bridge
-  lumen-paper-bridge agent --workspace PATH   Allow workspace-write Agent mode
-  lumen-paper-bridge full --workspace PATH    Explicitly unlock Full Agent mode
-  lumen-paper-bridge status                   Check the local Bridge
-  lumen-paper-bridge pair                     Copy the pairing token on macOS
-  lumen-paper-bridge token                    Print the pairing token
-  lumen-paper-bridge doctor                   Check Node, Codex and login state
+  lumen-paper-bridge [start]       Start the Bridge in the background
+  lumen-paper-bridge stop          Stop the managed background Bridge
+  lumen-paper-bridge restart       Restart or upgrade the managed Bridge
+  lumen-paper-bridge status        Show health, PID and log location
+  lumen-paper-bridge foreground    Run in the foreground for debugging
+  lumen-paper-bridge pair          Copy the pairing token on macOS
+  lumen-paper-bridge token         Print the pairing token
+  lumen-paper-bridge doctor        Check Node, Codex and login state
 
-The default Reader mode stays in the foreground. Press Ctrl-C to stop it.
+Reader, Agent and Full Agent permissions are selected in Lumen settings.
+The Bridge itself runs once in the background; sudo and npm are not needed.
 EOF
+}
+
+require_no_args() {
+  if [ "$#" -gt 1 ]; then
+    printf '`lumen-paper-bridge %s` does not accept additional arguments.\n' "$1" >&2
+    return 2
+  fi
+}
+
+ensure_state_dir() {
+  mkdir -p "$LUMEN_BRIDGE_STATE_DIR"
+  chmod 700 "$LUMEN_BRIDGE_STATE_DIR"
+}
+
+acquire_lifecycle_lock() {
+  ensure_state_dir
+  ATTEMPTS=0
+  if command -v shlock >/dev/null 2>&1; then
+    while ! shlock -p "$$" -f "$LIFECYCLE_LOCK_PATH"; do
+      ATTEMPTS=$((ATTEMPTS + 1))
+      if [ "$ATTEMPTS" -ge 150 ]; then
+        printf 'Another Bridge lifecycle command is still running. Wait a moment, then retry.\n' >&2
+        return 1
+      fi
+      sleep 0.1
+    done
+    LIFECYCLE_LOCK_KIND="shlock"
+  elif command -v flock >/dev/null 2>&1; then
+    exec 9>"$LIFECYCLE_LOCK_PATH"
+    while ! flock -n 9; do
+      ATTEMPTS=$((ATTEMPTS + 1))
+      if [ "$ATTEMPTS" -ge 150 ]; then
+        printf 'Another Bridge lifecycle command is still running. Wait a moment, then retry.\n' >&2
+        return 1
+      fi
+      sleep 0.1
+    done
+    LIFECYCLE_LOCK_KIND="flock"
+  else
+    while ! mkdir "$LIFECYCLE_LOCK_PATH" 2>/dev/null; do
+      ATTEMPTS=$((ATTEMPTS + 1))
+      if [ "$ATTEMPTS" -ge 150 ]; then
+        printf 'Another Bridge lifecycle command is still running. Remove %s only if no launcher is active.\n' "$LIFECYCLE_LOCK_PATH" >&2
+        return 1
+      fi
+      sleep 0.1
+    done
+    LIFECYCLE_LOCK_KIND="mkdir"
+  fi
+  trap release_lifecycle_lock EXIT
+}
+
+release_lifecycle_lock() {
+  case "$LIFECYCLE_LOCK_KIND" in
+    shlock)
+      if [ -f "$LIFECYCLE_LOCK_PATH" ] && [ "$(tr -d '\r\n' < "$LIFECYCLE_LOCK_PATH")" = "$$" ]; then
+        rm -f "$LIFECYCLE_LOCK_PATH"
+      fi
+      ;;
+    flock)
+      flock -u 9 2>/dev/null || true
+      ;;
+    mkdir)
+      rmdir "$LIFECYCLE_LOCK_PATH" 2>/dev/null || true
+      ;;
+  esac
+  LIFECYCLE_LOCK_KIND=""
 }
 
 check_node() {
@@ -79,6 +161,7 @@ token_value() {
     printf '%s' "$LUMEN_BRIDGE_TOKEN" | tr -d '\r\n'
     return 0
   fi
+  ensure_state_dir
   if [ ! -f "$TOKEN_PATH" ]; then
     check_node
     "$NODE_BIN" "$BRIDGE_DIR/server.mjs" --print-token >/dev/null
@@ -96,6 +179,14 @@ health() {
     "http://${HEALTH_HOST}:${LUMEN_BRIDGE_PORT}/health"
 }
 
+health_matches_current() {
+  "$NODE_BIN" -e '
+    const [raw, version, protocol] = process.argv.slice(1);
+    const value = JSON.parse(raw);
+    process.exit(value.version === version && value.protocolVersion === Number(protocol) ? 0 : 1);
+  ' "$1" "$BRIDGE_VERSION" "$BRIDGE_PROTOCOL_VERSION"
+}
+
 show_token() {
   token_value
   printf '\n'
@@ -103,65 +194,228 @@ show_token() {
 
 pair_token() {
   if command -v pbcopy >/dev/null 2>&1; then
-    token_value | pbcopy
-    printf 'Pairing token copied. Paste it into Lumen settings.\n'
+    if token_value | pbcopy; then
+      printf 'Pairing token copied. Paste it into Lumen settings with Command-V.\n'
+    else
+      printf 'Could not access the macOS clipboard. Run `lumen-paper-bridge token` locally to view the token.\n' >&2
+      return 1
+    fi
   else
     printf 'Pairing token (paste into Lumen settings):\n\n'
     show_token
   fi
 }
 
-workspace_from_args() {
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--workspace" ]; then
-      if [ "$#" -lt 2 ] || [ ! -d "$2" ]; then
-        printf 'Agent and Full Agent require --workspace with an existing directory.\n' >&2
-        return 1
+read_pid_file() {
+  MANAGED_PID=""
+  MANAGED_SERVER_PATH=""
+  [ -f "$PID_PATH" ] && [ -f "$SERVER_PATH_PATH" ] || return 1
+  IFS= read -r MANAGED_PID < "$PID_PATH" || true
+  IFS= read -r MANAGED_SERVER_PATH < "$SERVER_PATH_PATH" || true
+  case "$MANAGED_PID" in
+    ''|*[!0-9]*) MANAGED_PID=""; return 1 ;;
+  esac
+  case "$MANAGED_SERVER_PATH" in
+    /*/server.mjs) ;;
+    *) MANAGED_PID=""; MANAGED_SERVER_PATH=""; return 1 ;;
+  esac
+}
+
+managed_process_running() {
+  read_pid_file || return 1
+  if ! kill -0 "$MANAGED_PID" 2>/dev/null; then
+    rm -f "$PID_PATH" "$SERVER_PATH_PATH"
+    MANAGED_PID=""
+    MANAGED_SERVER_PATH=""
+    return 1
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    printf 'Cannot safely verify managed Bridge PID %s because ps is unavailable.\n' "$MANAGED_PID" >&2
+    return 2
+  fi
+  PROCESS_COMMAND="$(ps -ww -p "$MANAGED_PID" -o command= 2>/dev/null || true)"
+  case "$PROCESS_COMMAND" in
+    *"$MANAGED_SERVER_PATH"*) return 0 ;;
+    *)
+      printf 'Refusing to manage PID %s: it is not this Bridge process.\n' "$MANAGED_PID" >&2
+      printf 'Remove %s only after checking that the recorded process is stale.\n' "$PID_PATH" >&2
+      return 2
+      ;;
+  esac
+}
+
+unmanaged_bridge_message() {
+  printf 'A Bridge is already listening at http://%s:%s, but it was not started by this launcher.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" >&2
+  printf 'If it is an older foreground or source Bridge, press Ctrl-C in its terminal once, then run `lumen-paper-bridge start`.\n' >&2
+  printf 'No process was stopped automatically.\n' >&2
+}
+
+wait_for_health() {
+  ATTEMPTS=0
+  while [ "$ATTEMPTS" -lt 80 ]; do
+    if HEALTH_OUTPUT="$(health 2>/dev/null)"; then
+      if health_matches_current "$HEALTH_OUTPUT"; then
+        return 0
       fi
-      (cd -P "$2" >/dev/null 2>&1 && pwd)
-      return 0
+      printf 'Another Lumen Bridge version is already listening at http://%s:%s.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" >&2
+      return 3
     fi
-    shift
+    if [ -n "${MANAGED_PID:-}" ] && ! kill -0 "$MANAGED_PID" 2>/dev/null; then
+      return 1
+    fi
+    ATTEMPTS=$((ATTEMPTS + 1))
+    sleep 0.1
   done
-  printf 'Agent and Full Agent require --workspace /absolute/path.\n' >&2
   return 1
 }
 
-health_matches() {
-  "$NODE_BIN" -e '
-    const [raw, mode, workspace, version, protocol] = process.argv.slice(1);
-    const health = JSON.parse(raw);
-    const capabilities = health.capabilities || {};
-    const versionMatches = health.version === version && health.protocolVersion === Number(protocol);
-    const modeMatches = (mode === "reader" && capabilities.agent === false && capabilities.unrestricted === false)
-      || (mode === "agent" && capabilities.agent === true && capabilities.unrestricted === false)
-      || (mode === "full" && capabilities.unrestricted === true);
-    const workspaceMatches = mode === "reader" || capabilities.workspace === workspace;
-    process.exit(versionMatches && modeMatches && workspaceMatches ? 0 : 1);
-  ' "$1" "$2" "$3" "$BRIDGE_VERSION" "$BRIDGE_PROTOCOL_VERSION"
-}
-
 start_bridge() {
-  EXPECTED_MODE="$1"
-  EXPECTED_WORKSPACE="$2"
-  shift 2
   check_node
   check_codex
+  ensure_state_dir
+
   if HEALTH_OUTPUT="$(health 2>/dev/null)"; then
-    if health_matches "$HEALTH_OUTPUT" "$EXPECTED_MODE" "$EXPECTED_WORKSPACE"; then
-      printf 'Lumen Bridge is already running at http://%s:%s with the requested profile.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT"
-      printf '%s\n' "$HEALTH_OUTPUT"
-      pair_token
+    if health_matches_current "$HEALTH_OUTPUT"; then
+      if managed_process_running; then
+        printf 'Lumen Bridge is already running at http://%s:%s (PID %s).\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" "$MANAGED_PID"
+      else
+        STATUS=$?
+        if [ "$STATUS" -eq 2 ]; then return 2; fi
+        unmanaged_bridge_message
+        return 3
+      fi
+      printf 'Log: %s\n' "$LOG_PATH"
+      pair_token || true
       return 0
     fi
-    printf 'A Bridge is already running, but its version, profile or workspace does not match this command.\n' >&2
-    printf 'Stop the existing Bridge with Ctrl-C, then run this command again.\n' >&2
-    printf 'Current Bridge: %s\n' "$HEALTH_OUTPUT" >&2
+    unmanaged_bridge_message
+    printf 'The running Bridge version does not match the installed launcher.\n' >&2
     return 3
   fi
-  pair_token
+
+  if managed_process_running; then
+    printf 'Managed Bridge PID %s exists but its health endpoint is unavailable.\n' "$MANAGED_PID" >&2
+    printf 'Inspect %s, then run `lumen-paper-bridge restart`.\n' "$LOG_PATH" >&2
+    return 1
+  else
+    STATUS=$?
+    if [ "$STATUS" -eq 2 ]; then return 2; fi
+  fi
+
+  : > "$LOG_PATH"
+  chmod 600 "$LOG_PATH"
+  printf '\n[%s] Starting Lumen Bridge v%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$BRIDGE_VERSION" >> "$LOG_PATH"
+  LUMEN_BRIDGE_PRINT_TOKEN=0 LUMEN_CODEX_BIN="$CODEX_BIN" \
+    nohup "$NODE_BIN" "$BRIDGE_DIR/server.mjs" </dev/null >> "$LOG_PATH" 2>&1 &
+  MANAGED_PID=$!
+  PID_TEMP="$PID_PATH.$$"
+  SERVER_PATH_TEMP="$SERVER_PATH_PATH.$$"
+  printf '%s\n' "$MANAGED_PID" > "$PID_TEMP"
+  printf '%s\n' "$BRIDGE_DIR/server.mjs" > "$SERVER_PATH_TEMP"
+  chmod 600 "$PID_TEMP"
+  chmod 600 "$SERVER_PATH_TEMP"
+  mv -f "$SERVER_PATH_TEMP" "$SERVER_PATH_PATH"
+  mv -f "$PID_TEMP" "$PID_PATH"
+
+  if wait_for_health; then
+    printf 'Lumen Bridge is running in the background at http://%s:%s (PID %s).\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" "$MANAGED_PID"
+    printf 'Permissions are selected in Lumen settings. Log: %s\n' "$LOG_PATH"
+    pair_token || true
+    return 0
+  else
+    START_STATUS=$?
+  fi
+
+  if ! kill -0 "$MANAGED_PID" 2>/dev/null; then rm -f "$PID_PATH" "$SERVER_PATH_PATH"; fi
+  printf 'Lumen Bridge did not become healthy. Log: %s\n' "$LOG_PATH" >&2
+  if command -v grep >/dev/null 2>&1 && grep -q 'already in use' "$LOG_PATH"; then
+    unmanaged_bridge_message
+  fi
+  if command -v tail >/dev/null 2>&1; then tail -n 20 "$LOG_PATH" >&2 || true; fi
+  return "$START_STATUS"
+}
+
+stop_bridge() {
+  ensure_state_dir
+  if managed_process_running; then
+    STOP_PID="$MANAGED_PID"
+    if ! kill -TERM "$STOP_PID" 2>/dev/null; then
+      printf 'Managed Bridge PID %s exited before it could be stopped.\n' "$STOP_PID"
+      rm -f "$PID_PATH" "$SERVER_PATH_PATH"
+      return 0
+    fi
+    ATTEMPTS=0
+    while [ "$ATTEMPTS" -lt 50 ] && kill -0 "$STOP_PID" 2>/dev/null; do
+      ATTEMPTS=$((ATTEMPTS + 1))
+      sleep 0.1
+    done
+    if kill -0 "$STOP_PID" 2>/dev/null; then
+      printf 'Bridge PID %s did not stop after SIGTERM; it was not force-killed. Inspect %s.\n' "$STOP_PID" "$LOG_PATH" >&2
+      return 1
+    fi
+    rm -f "$PID_PATH" "$SERVER_PATH_PATH"
+    printf 'Lumen Bridge stopped.\n'
+    return 0
+  else
+    STATUS=$?
+    if [ "$STATUS" -eq 2 ]; then return 2; fi
+  fi
+
+  if HEALTH_OUTPUT="$(health 2>/dev/null)"; then
+    unmanaged_bridge_message
+    return 3
+  fi
+  rm -f "$PID_PATH" "$SERVER_PATH_PATH"
+  printf 'Lumen Bridge is not running.\n'
+}
+
+restart_bridge() {
+  STOP_STATUS=0
+  stop_bridge || STOP_STATUS=$?
+  if [ "$STOP_STATUS" -ne 0 ]; then return "$STOP_STATUS"; fi
+  start_bridge
+}
+
+status_bridge() {
+  if HEALTH_OUTPUT="$(health 2>/dev/null)"; then
+    if managed_process_running; then
+      printf 'Lumen Bridge is running at http://%s:%s (PID %s).\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" "$MANAGED_PID"
+      printf 'Log: %s\n' "$LOG_PATH"
+    else
+      STATUS=$?
+      if [ "$STATUS" -eq 2 ]; then return 2; fi
+      printf 'Lumen Bridge is reachable at http://%s:%s, but is not managed by this launcher.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT"
+    fi
+    printf '%s\n' "$HEALTH_OUTPUT"
+    return 0
+  fi
+  if managed_process_running; then
+    printf 'Managed Bridge PID %s is running, but health is unavailable. Log: %s\n' "$MANAGED_PID" "$LOG_PATH" >&2
+  else
+    STATUS=$?
+    if [ "$STATUS" -eq 2 ]; then return 2; fi
+    printf 'Lumen Bridge is not reachable at http://%s:%s.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" >&2
+  fi
+  return 1
+}
+
+foreground_bridge() {
+  check_node
+  check_codex
+  ensure_state_dir
+  if HEALTH_OUTPUT="$(health 2>/dev/null)"; then
+    printf 'A Bridge is already running at http://%s:%s. Stop it before using foreground mode.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" >&2
+    return 3
+  fi
   export LUMEN_BRIDGE_PRINT_TOKEN=0
-  exec "$NODE_BIN" "$BRIDGE_DIR/server.mjs" "$@"
+  exec "$NODE_BIN" "$BRIDGE_DIR/server.mjs"
+}
+
+migration_message() {
+  printf '`lumen-paper-bridge %s` is no longer a separate server mode.\n' "$1" >&2
+  printf 'Run `lumen-paper-bridge start` once, then choose Reader, Agent or Full Agent in Lumen settings.\n' >&2
+  printf 'Workspace access is selected per request in the extension; npm and sudo are not needed.\n' >&2
+  return 2
 }
 
 COMMAND="${1:-start}"
@@ -169,33 +423,46 @@ if [ "$#" -gt 0 ]; then shift; fi
 
 case "$COMMAND" in
   start|reader)
-    start_bridge reader "" "$@"
+    require_no_args "$COMMAND" "$@"
+    acquire_lifecycle_lock
+    start_bridge
     ;;
-  agent)
-    REQUESTED_WORKSPACE="$(workspace_from_args "$@")"
-    start_bridge agent "$REQUESTED_WORKSPACE" --allow-agent "$@"
+  stop)
+    require_no_args "$COMMAND" "$@"
+    acquire_lifecycle_lock
+    stop_bridge
     ;;
-  full)
-    printf 'Warning: Full Agent disables the Codex sandbox and approval prompts.\n' >&2
-    REQUESTED_WORKSPACE="$(workspace_from_args "$@")"
-    start_bridge full "$REQUESTED_WORKSPACE" --allow-agent --allow-unrestricted "$@"
+  restart)
+    require_no_args "$COMMAND" "$@"
+    acquire_lifecycle_lock
+    restart_bridge
+    ;;
+  foreground)
+    require_no_args "$COMMAND" "$@"
+    acquire_lifecycle_lock
+    foreground_bridge
+    ;;
+  agent|full)
+    migration_message "$COMMAND"
     ;;
   status)
-    if ! health; then
-      printf 'Lumen Bridge is not reachable at http://%s:%s.\n' "$LUMEN_BRIDGE_HOST" "$LUMEN_BRIDGE_PORT" >&2
-      exit 1
-    fi
-    printf '\n'
+    require_no_args "$COMMAND" "$@"
+    status_bridge
     ;;
   pair)
+    require_no_args "$COMMAND" "$@"
     pair_token
     ;;
   token)
+    require_no_args "$COMMAND" "$@"
     show_token
     ;;
   doctor)
+    require_no_args "$COMMAND" "$@"
     printf 'Bridge files: %s\n' "$BRIDGE_DIR"
     printf 'State:        %s\n' "$LUMEN_BRIDGE_STATE_DIR"
+    printf 'PID file:     %s\n' "$PID_PATH"
+    printf 'Log:          %s\n' "$LOG_PATH"
     check_node && printf 'Node:         %s\n' "$($NODE_BIN --version)"
     if [ -n "$CODEX_BIN" ]; then
       printf 'Codex:        %s\n' "$($CODEX_BIN --version 2>&1 | head -n 1)"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.19 — 2026-07-30
+
+- Replaced three server-wide Bridge startup profiles with one background Bridge process.
+- Made Reader, Agent and Full Agent switch per request from Lumen settings without restarting the Bridge.
+- Added an explicit per-request workspace for Agent and Full Agent while keeping automatic Paper Brief generation in Reader.
+- Added `start`, `stop` and `restart` lifecycle commands; installation now returns the shell after starting in the background.
+- Kept health checks responsive with an asynchronous Codex-status cache and serialized concurrent lifecycle commands.
+- Removed installed-user guidance for source-only `npm run bridge:*` commands and clarified that Full Agent never requires `sudo`.
+
 ## 0.1.18 — 2026-07-30
 
 - Added a standalone Codex Bridge Release bundle that runs without cloning the repository or installing npm dependencies.

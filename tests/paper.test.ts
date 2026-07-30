@@ -128,6 +128,12 @@ describe("paper text helpers", () => {
     expect(settings.codexCalculations).toBe(true);
     expect(settings.chatMode).toBe("research");
     expect(settings.codexPermissionMode).toBe("reader");
+    expect(settings.codexWorkspace).toBe("");
+  });
+
+  it("preserves the workspace used by Codex Agent requests", () => {
+    const settings = normalizeSettings({ codexWorkspace: "/tmp/lumen-workspace" });
+    expect(settings.codexWorkspace).toBe("/tmp/lumen-workspace");
   });
 
   it("preserves explicitly empty prompt fields during migration", () => {
