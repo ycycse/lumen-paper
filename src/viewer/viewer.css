@@ -159,15 +159,29 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .textLayer :is(span, br) { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0% 0%; }
 .textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { z-index: 1; }
 .textLayer span.markedContent { top: 0; height: 0; }
-.textLayer ::selection { background: rgba(173, 205, 80, .34); }
+.textLayer ::selection { background: rgba(173, 196, 94, .24); }
 .textLayer br::selection { background: transparent; }
 .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
 .highlight-layer { position: absolute; z-index: 2; inset: 0; pointer-events: none; }
-.saved-highlight { position: absolute; border-radius: 3px; mix-blend-mode: multiply; }
-.saved-highlight.citron { background: rgba(213, 232, 116, .53); }
-.saved-highlight.sky { background: rgba(133, 203, 228, .42); }
-.saved-highlight.coral { background: rgba(244, 151, 126, .42); }
-.saved-highlight.violet { background: rgba(177, 152, 226, .4); }
+.saved-highlight {
+  --highlight-ink: 192, 207, 115;
+  position: absolute;
+  border-radius: 1px 2px 2px 1px;
+  background: linear-gradient(
+    180deg,
+    transparent 25%,
+    rgba(var(--highlight-ink), .08) 29%,
+    rgba(var(--highlight-ink), .3) 40%,
+    rgba(var(--highlight-ink), .28) 82%,
+    rgba(var(--highlight-ink), .12) 91%,
+    transparent 96%
+  );
+  mix-blend-mode: multiply;
+}
+.saved-highlight.citron { --highlight-ink: 192, 207, 115; }
+.saved-highlight.sky { --highlight-ink: 120, 173, 191; }
+.saved-highlight.coral { --highlight-ink: 214, 146, 128; }
+.saved-highlight.violet { --highlight-ink: 158, 143, 189; }
 
 .insight-panel { position: fixed; z-index: 30; top: var(--topbar-height); right: 0; bottom: 0; width: var(--panel-width); background: #fbfaf5; border-left: 1px solid var(--line); box-shadow: -12px 0 38px rgba(70, 61, 45, .055); }
 .panel-resize-handle { position: absolute; z-index: 8; top: 0; bottom: 0; left: -6px; width: 12px; border: 0; outline: 0; cursor: col-resize; touch-action: none; }

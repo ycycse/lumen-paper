@@ -472,7 +472,7 @@ export function ViewerApp() {
         if (!pageElement) return;
         const page = Number(pageElement.dataset.page);
         const pageRect = pageElement.getBoundingClientRect();
-        const clientRects = [...range.getClientRects()].filter(
+        const clientRects = preciseSelectionRects(range, pageElement).filter(
           (rect) => rect.width > 1 && rect.height > 1 && intersects(rect, pageRect),
         );
         if (!clientRects.length) return;
@@ -1073,6 +1073,13 @@ function PdfPage({
   const textRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [nearViewport, setNearViewport] = useState(pageNumber <= 2);
+  const [canvasRevision, setCanvasRevision] = useState(0);
+  const [alignedHighlightRects, setAlignedHighlightRects] = useState<Record<string, Highlight["rects"][number]>>({});
+  const highlightsRef = useRef(highlights);
+  highlightsRef.current = highlights;
+  const highlightGeometryKey = highlights.map((highlight) => (
+    `${highlight.id}:${highlight.rects.map((rect) => `${rect.x},${rect.y},${rect.width},${rect.height}`).join(";")}`
+  )).join("|");
 
   useEffect(() => {
     if (nearViewport) return;
@@ -1099,6 +1106,7 @@ function PdfPage({
 
   useEffect(() => {
     if (!page || !canvasRef.current || !textRef.current || !containerRef.current) return;
+    let active = true;
     const viewport = page.getViewport({ scale });
     const outputScale = window.devicePixelRatio || 1;
     const canvas = canvasRef.current;
@@ -1118,6 +1126,9 @@ function PdfPage({
       viewport,
       transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
     });
+    void renderTask.promise
+      .then(() => { if (active) setCanvasRevision((revision) => revision + 1); })
+      .catch(() => undefined);
     let textLayer: TextLayer | undefined;
     textContainer.replaceChildren();
     void page.getTextContent().then((content) => {
@@ -1125,10 +1136,36 @@ function PdfPage({
       return textLayer.render();
     });
     return () => {
+      active = false;
       renderTask.cancel();
       textLayer?.cancel();
     };
   }, [page, scale]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!page || canvasRevision === 0 || !container) return;
+    const pageRect = container.getBoundingClientRect();
+    const next: Record<string, Highlight["rects"][number]> = {};
+    for (const highlight of highlightsRef.current) {
+      const rawRects = highlight.rects.map((rect) => new DOMRect(
+        pageRect.left + rect.x * pageRect.width,
+        pageRect.top + rect.y * pageRect.height,
+        rect.width * pageRect.width,
+        rect.height * pageRect.height,
+      ));
+      const alignedRects = alignSelectionRectsToCanvasInk(rawRects, container);
+      alignedRects.forEach((rect, index) => {
+        next[`${highlight.id}:${index}`] = {
+          x: clamp01((rect.left - pageRect.left) / pageRect.width),
+          y: clamp01((rect.top - pageRect.top) / pageRect.height),
+          width: clamp01(rect.width / pageRect.width),
+          height: clamp01(rect.height / pageRect.height),
+        };
+      });
+    }
+    setAlignedHighlightRects(next);
+  }, [canvasRevision, highlightGeometryKey, page, scale]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -1151,18 +1188,24 @@ function PdfPage({
       <canvas ref={canvasRef} />
       <div ref={textRef} className="textLayer" />
       <div className="highlight-layer" aria-hidden="true">
-        {highlights.flatMap((highlight) => highlight.rects.map((rect, index) => (
-          <span
-            key={`${highlight.id}:${index}`}
-            className={`saved-highlight ${highlight.color}`}
-            style={{
-              left: `${rect.x * 100}%`,
-              top: `${rect.y * 100}%`,
-              width: `${rect.width * 100}%`,
-              height: `${rect.height * 100}%`,
-            }}
-          />
-        )))}
+        {highlights.flatMap((highlight) => highlight.rects.map((rect, index) => {
+          const rectKey = `${highlight.id}:${index}`;
+          const displayRect = alignedHighlightRects[rectKey] ?? rect;
+          const edgeInset = `min(${roundScale(.45 * scale)}px, ${displayRect.width * 3}%)`;
+          return (
+            <span
+              key={rectKey}
+              className={`saved-highlight ${highlight.color}`}
+              data-ink-aligned={Boolean(alignedHighlightRects[rectKey])}
+              style={{
+                left: `calc(${displayRect.x * 100}% + ${edgeInset})`,
+                top: `${displayRect.y * 100}%`,
+                width: `calc(${displayRect.width * 100}% - ${edgeInset} - ${edgeInset})`,
+                height: `${displayRect.height * 100}%`,
+              }}
+            />
+          );
+        }))}
       </div>
       <span className="page-number">{pageNumber}</span>
     </div>
@@ -1559,6 +1602,113 @@ function fileNameFromUrl(value: string): string {
   } catch {
     return "Research paper";
   }
+}
+
+function preciseSelectionRects(range: Range, pageElement: HTMLElement): DOMRect[] {
+  const textLayer = pageElement.querySelector(".textLayer");
+  if (!textLayer) return [...range.getClientRects()];
+
+  const rects: DOMRect[] = [];
+  const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+  for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+    if (!(current instanceof Text) || !range.intersectsNode(current)) continue;
+    const start = range.startContainer === current ? range.startOffset : 0;
+    const end = range.endContainer === current ? range.endOffset : current.data.length;
+    const selectedText = current.data.slice(start, end);
+    const leadingWhitespace = selectedText.match(/^[\s\u200B\uFEFF]+/u)?.[0].length ?? 0;
+    const trailingWhitespace = selectedText.match(/[\s\u200B\uFEFF]+$/u)?.[0].length ?? 0;
+    const visibleStart = start + leadingWhitespace;
+    const visibleEnd = end - trailingWhitespace;
+    if (visibleStart >= visibleEnd) continue;
+
+    const characterRange = document.createRange();
+    characterRange.setStart(current, visibleStart);
+    characterRange.setEnd(current, visibleEnd);
+    rects.push(...characterRange.getClientRects());
+  }
+
+  return rects.length ? mergeSelectionLineRects(rects) : [...range.getClientRects()];
+}
+
+function alignSelectionRectsToCanvasInk(rects: DOMRect[], pageElement: HTMLElement): DOMRect[] {
+  const canvas = pageElement.querySelector<HTMLCanvasElement>("canvas");
+  const context = canvas?.getContext("2d");
+  const canvasRect = canvas?.getBoundingClientRect();
+  if (!canvas || !context || !canvasRect?.width || !canvasRect.height) return rects;
+
+  const scaleX = canvas.width / canvasRect.width;
+  const scaleY = canvas.height / canvasRect.height;
+  return rects.map((rect) => {
+    const x = Math.max(0, Math.floor((rect.left - canvasRect.left) * scaleX));
+    const y = Math.max(0, Math.floor((rect.top - canvasRect.top) * scaleY));
+    const endX = Math.min(canvas.width, Math.ceil((rect.right - canvasRect.left) * scaleX));
+    const endY = Math.min(canvas.height, Math.ceil((rect.bottom - canvasRect.top) * scaleY));
+    const width = endX - x;
+    const height = endY - y;
+    if (width <= 0 || height <= 0) return rect;
+
+    let pixels: Uint8ClampedArray;
+    try {
+      pixels = context.getImageData(x, y, width, height).data;
+    } catch {
+      return rect;
+    }
+    let first = width;
+    let last = -1;
+    for (let pixelY = 0; pixelY < height; pixelY += 1) {
+      for (let pixelX = 0; pixelX < width; pixelX += 1) {
+        const offset = (pixelY * width + pixelX) * 4;
+        const luminance = pixels[offset] * .2126 + pixels[offset + 1] * .7152 + pixels[offset + 2] * .0722;
+        if (pixels[offset + 3] > 0 && luminance < 200) {
+          first = Math.min(first, pixelX);
+          last = Math.max(last, pixelX);
+        }
+      }
+    }
+    if (last < 0) return rect;
+
+    const inkLeft = Math.max(rect.left, canvasRect.left + (x + first) / scaleX);
+    const inkRight = Math.min(rect.right, canvasRect.left + (x + last + 1) / scaleX);
+    if (inkRight <= inkLeft) return rect;
+    const minimumWidth = rect.width * .8;
+    if (inkRight - inkLeft >= minimumWidth) {
+      return new DOMRect(inkLeft, rect.top, inkRight - inkLeft, rect.height);
+    }
+
+    const center = (inkLeft + inkRight) / 2;
+    const left = Math.max(rect.left, Math.min(center - minimumWidth / 2, rect.right - minimumWidth));
+    return new DOMRect(left, rect.top, minimumWidth, rect.height);
+  });
+}
+
+function mergeSelectionLineRects(rects: DOMRect[]): DOMRect[] {
+  const ordered = rects
+    .map((rect) => new DOMRect(rect.left, rect.top, rect.width, rect.height))
+    .sort((a, b) => a.top - b.top || a.left - b.left);
+  const merged: DOMRect[] = [];
+
+  for (const rect of ordered) {
+    const previous = merged.at(-1);
+    if (!previous) {
+      merged.push(rect);
+      continue;
+    }
+    const verticalOverlap = Math.min(previous.bottom, rect.bottom) - Math.max(previous.top, rect.top);
+    const sameLine = verticalOverlap >= Math.min(previous.height, rect.height) * .55;
+    const horizontalGap = rect.left - previous.right;
+    const joinDistance = Math.max(previous.height, rect.height) * .75;
+    if (!sameLine || horizontalGap > joinDistance) {
+      merged.push(rect);
+      continue;
+    }
+    const left = Math.min(previous.left, rect.left);
+    const top = Math.min(previous.top, rect.top);
+    const right = Math.max(previous.right, rect.right);
+    const bottom = Math.max(previous.bottom, rect.bottom);
+    merged[merged.length - 1] = new DOMRect(left, top, right - left, bottom - top);
+  }
+
+  return merged;
 }
 
 function intersects(a: DOMRect, b: DOMRect): boolean {
