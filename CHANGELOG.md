@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.22 — 2026-07-30
+
+- Added “Ask about this passage”: attach a selected quote, write any question, and send only when ready.
+- Replaced one-click Explain and Challenge actions with editable quick fills inside the quote composer; Translate remains available directly.
+- Preserved the exact quote in the visible message, model request and later conversation turns, with an editable quote prompt in Prompt Studio.
+- Repaired partial Latin-word endpoints, stale selections and missing whitespace across PDF.js text-layer line breaks.
+- Cleared stale Codex model-catalog errors after a successful connection test and ignored late responses from older settings.
+- Read Bridge health independently from model discovery and show its running version without blocking the model list.
+
+## 0.1.21 — 2026-07-30
+
+- Rendered inline and display LaTeX with KaTeX while keeping code spans literal and wide equations horizontally scrollable.
+- Improved Codex model discovery errors, model-catalog parsing and Bridge upgrade guidance.
+- Added Bridge and extension regression coverage for slow status checks, origins and model listing.
+
 ## 0.1.20 — 2026-07-30
 
 - Refined saved highlights into a lighter, paper-like marker treatment that keeps text legible.

@@ -33,7 +33,7 @@ import remarkMath from "remark-math";
 import { getDocument, TextLayer } from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
 import { normalizeMathDelimiters } from "../lib/markdown";
-import { chatPrompt, chatSystemPrompt, selectionPrompt, summaryPrompt } from "../lib/prompts";
+import { chatPrompt, chatSystemPrompt, quotedSelectionPrompt, selectionPrompt, summaryPrompt } from "../lib/prompts";
 import {
   citationMarkdown,
   hasRelevantPaperContext,
@@ -45,6 +45,7 @@ import {
 } from "../lib/paper";
 import { getCachedPdf, putCachedPdf, putCachedPdfIndex } from "../lib/pdf-cache";
 import { sourceFaviconUrl } from "../lib/favicon";
+import { selectionText, snapSelectionRangeToWords } from "../lib/selection";
 import {
   EMPTY_PAPER_STATE,
   getPaperState,
@@ -96,10 +97,13 @@ const READING_FONT_OPTIONS: Array<{ value: ReadingFontMode; label: string; detai
 interface SelectionState {
   page: number;
   text: string;
+  truncated: boolean;
   rects: Highlight["rects"];
   top: number;
   left: number;
 }
+
+type QuoteDraft = Pick<SelectionState, "page" | "text" | "truncated">;
 
 interface SourceInfo {
   url: string;
@@ -137,6 +141,7 @@ export function ViewerApp() {
   const [customReadingFont, setCustomReadingFont] = useState(readCustomReadingFont);
   const [tab, setTab] = useState<PanelTab>("overview");
   const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [quoteDraft, setQuoteDraft] = useState<QuoteDraft | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -290,6 +295,8 @@ export function ViewerApp() {
     setError("");
     setPdf(null);
     setPages([]);
+    setSelection(null);
+    setQuoteDraft(null);
     setIndexProgress(null);
     setSource(nextSource);
     summaryAttempted.current = false;
@@ -462,23 +469,35 @@ export function ViewerApp() {
       if ((event.target as Element | null)?.closest(".selection-popover")) return;
       window.setTimeout(() => {
         const selected = window.getSelection();
-        const text = selected?.toString().trim();
-        if (!selected || !text || selected.rangeCount === 0) {
+        if (!selected || selected.rangeCount === 0 || selected.isCollapsed) {
           setSelection(null);
           return;
         }
-        const range = selected.getRangeAt(0);
-        const node = range.commonAncestorContainer instanceof Element
-          ? range.commonAncestorContainer
-          : range.commonAncestorContainer.parentElement;
-        const pageElement = node?.closest<HTMLElement>(".pdf-page");
-        if (!pageElement) return;
+        const rawRange = selected.getRangeAt(0);
+        const startPage = closestPdfPage(rawRange.startContainer);
+        const endPage = closestPdfPage(rawRange.endContainer);
+        if (!startPage || startPage !== endPage) {
+          setSelection(null);
+          return;
+        }
+        const pageElement = startPage;
+        const range = snapSelectionRangeToWords(rawRange, pageElement);
+        const text = selectionText(range, pageElement);
+        if (!text) {
+          setSelection(null);
+          return;
+        }
         const page = Number(pageElement.dataset.page);
         const pageRect = pageElement.getBoundingClientRect();
         const clientRects = preciseSelectionRects(range, pageElement).filter(
           (rect) => rect.width > 1 && rect.height > 1 && intersects(rect, pageRect),
         );
-        if (!clientRects.length) return;
+        if (!clientRects.length) {
+          setSelection(null);
+          return;
+        }
+        selected.removeAllRanges();
+        selected.addRange(range);
         const rects = clientRects.map((rect) => ({
           x: clamp01((rect.left - pageRect.left) / pageRect.width),
           y: clamp01((rect.top - pageRect.top) / pageRect.height),
@@ -489,6 +508,7 @@ export function ViewerApp() {
         setSelection({
           page,
           text: text.slice(0, 4000),
+          truncated: text.length > 4000,
           rects,
           top: Math.min(window.innerHeight - 64, lastRect.bottom + 10),
           left: Math.min(window.innerWidth - 310, Math.max(12, lastRect.left)),
@@ -515,18 +535,37 @@ export function ViewerApp() {
     setSelection(null);
   };
 
-  const askAboutSelection = async (action: "explain" | "translate" | "challenge") => {
+  const beginQuoteQuestion = () => {
+    if (!selection) return;
+    if (!configured) {
+      showPanel("overview");
+      return;
+    }
+    setQuoteDraft({ page: selection.page, text: selection.text, truncated: selection.truncated });
+    setSelection(null);
+    window.getSelection()?.removeAllRanges();
+    showPanel("chat");
+  };
+
+  const translateSelection = async () => {
     if (!selection || chatBusyRef.current) return;
     if (!configured) {
       showPanel("overview");
       return;
     }
     const chosen = selection;
-    const label = action === "explain" ? "解释这段" : action === "translate" ? "翻译这段" : "挑战这段";
+    setQuoteDraft(null);
+    const pageContext = pages.find(({ page }) => page === chosen.page)?.text ?? "";
+    const prompt = selectionPrompt("translate", chosen.page, chosen.text, pageContext, {
+      explain: settings!.explainTemplate,
+      translate: settings!.translateTemplate,
+      challenge: settings!.challengeTemplate,
+    });
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      content: label,
+      content: "翻译这段",
+      prompt,
       page: chosen.page,
       quote: chosen.text,
       createdAt: Date.now(),
@@ -539,17 +578,12 @@ export function ViewerApp() {
     setChatBusy(true);
     setError("");
     try {
-      const pageContext = pages.find(({ page }) => page === chosen.page)?.text ?? "";
       const response = await requestAi({
         system: settings!.paperSystemPrompt,
         purpose: "chat",
         messages: [{
           role: "user",
-          content: selectionPrompt(action, chosen.page, chosen.text, pageContext, {
-            explain: settings!.explainTemplate,
-            translate: settings!.translateTemplate,
-            challenge: settings!.challengeTemplate,
-          }),
+          content: prompt,
         }],
       });
       if (!response.ok || !response.content) throw new Error(response.error || "AI 请求失败");
@@ -579,7 +613,7 @@ export function ViewerApp() {
   const askChat = async () => {
     const question = chatInput.trim();
     if (!question || chatBusyRef.current || !settings) return;
-    if (!pages.length && settings.chatMode === "paper") {
+    if (!pages.length && settings.chatMode === "paper" && !quoteDraft) {
       setError("原文索引仍在后台建立，请稍后再提问。");
       return;
     }
@@ -587,25 +621,41 @@ export function ViewerApp() {
       setTab("overview");
       return;
     }
+    const chosenQuote = quoteDraft;
+    const quotePrompt = chosenQuote
+      ? quotedSelectionPrompt(
+        question,
+        chosenQuote.page,
+        chosenQuote.text,
+        pages.find(({ page }) => page === chosenQuote.page)?.text ?? "",
+        settings.quoteTemplate,
+      )
+      : "";
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: question,
+      prompt: quotePrompt || undefined,
+      page: chosenQuote?.page,
+      quote: chosenQuote?.text,
       createdAt: Date.now(),
     };
     const history = paperState.messages;
     setChatInput("");
+    setQuoteDraft(null);
     commitPaperState((state) => ({ ...state, messages: [...state.messages, userMessage] }));
     chatBusyRef.current = true;
     setChatBusy(true);
     setError("");
     try {
-      const attachPaper = settings.chatMode === "paper" || hasRelevantPaperContext(question, pages);
+      const attachPaper = !chosenQuote && (settings.chatMode === "paper" || hasRelevantPaperContext(question, pages));
       const relevant = attachPaper ? rankRelevantPages(question, pages) : [];
+      const messages = chatPrompt(question, relevant, history, settings.chatTemplate);
+      if (quotePrompt) messages[messages.length - 1] = { role: "user", content: quotePrompt };
       const response = await requestAi({
         system: chatSystemPrompt(settings.chatMode, settings.paperSystemPrompt, settings.researchSystemPrompt),
         purpose: "chat",
-        messages: chatPrompt(question, relevant, history, settings.chatTemplate),
+        messages,
       });
       if (!response.ok || !response.content) throw new Error(response.error || "AI 请求失败");
       commitPaperState((state) => ({
@@ -908,6 +958,8 @@ export function ViewerApp() {
                 configured={configured}
                 onChange={setChatInput}
                 onSend={() => void askChat()}
+                quote={quoteDraft}
+                onQuoteRemove={() => setQuoteDraft(null)}
                 onPage={goToPage}
                 onSettings={() => chrome.runtime.openOptionsPage()}
                 mode={settings?.chatMode || "research"}
@@ -937,8 +989,12 @@ export function ViewerApp() {
         <SelectionPopover
           selection={selection}
           onHighlight={addHighlight}
-          onAction={(action) => void askAboutSelection(action)}
-          onClose={() => setSelection(null)}
+          onAsk={beginQuoteQuestion}
+          onTranslate={() => void translateSelection()}
+          onClose={() => {
+            window.getSelection()?.removeAllRanges();
+            setSelection(null);
+          }}
         />
       )}
       {error && loadState !== "error" && (
@@ -1304,26 +1360,32 @@ function OverviewPanel({ configured, summary, busy, onAnalyze, onSettings, onPag
   );
 }
 
-function ChatPanel({ messages, busy, value, configured, mode, permissionMode, onChange, onSend, onPage, onSettings, onModeChange }: {
+function ChatPanel({ messages, busy, value, quote, configured, mode, permissionMode, onChange, onSend, onQuoteRemove, onPage, onSettings, onModeChange }: {
   messages: ChatMessage[];
   busy: boolean;
   value: string;
+  quote: QuoteDraft | null;
   configured: boolean;
   mode: LumenSettings["chatMode"];
   permissionMode: LumenSettings["codexPermissionMode"] | null;
   onChange: (value: string) => void;
   onSend: () => void;
+  onQuoteRemove: () => void;
   onPage: (page: number) => void;
   onSettings: () => void;
   onModeChange: (mode: LumenSettings["chatMode"]) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // Newer Chromium builds may return a Promise from scrollIntoView(). An
   // implicit return here makes React treat that Promise as an effect cleanup,
   // then crash the whole reader when messages change or this tab unmounts.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [busy, messages]);
+  useEffect(() => {
+    if (quote) inputRef.current?.focus();
+  }, [quote]);
   return (
     <div className="chat-layout">
       <div className="chat-mode-bar">
@@ -1344,7 +1406,7 @@ function ChatPanel({ messages, busy, value, configured, mode, permissionMode, on
         )}
         {messages.map((message) => (
           <div key={message.id} className={`message ${message.role}`}>
-            {message.quote && <blockquote className="message-quote">{message.quote}</blockquote>}
+            {message.quote && <ExpandableQuote text={message.quote} />}
             {message.role === "assistant" ? (
               <>
                 <div className="assistant-kicker"><Sparkles size={12} /> Lumen</div>
@@ -1373,21 +1435,36 @@ function ChatPanel({ messages, busy, value, configured, mode, permissionMode, on
         <div ref={bottomRef} />
       </div>
       {configured ? (
-        <div className="composer">
-          <textarea
-            value={value}
-            rows={1}
-            placeholder={mode === "paper" ? "问这篇论文…" : "问论文，也可以问外部世界…"}
-            onChange={(event) => onChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                onSend();
-              }
-            }}
-          />
-          <button onClick={onSend} disabled={!value.trim() || busy} aria-label="发送"><Send size={16} /></button>
-          <span>Enter 发送 · Shift Enter 换行</span>
+        <div className={`composer ${quote ? "has-quote" : ""}`}>
+          {quote && (
+            <div className="composer-quote">
+              <div><button onClick={() => onPage(quote.page)}>引用 p.{quote.page}</button>{quote.truncated && <small>仅引用前 4,000 字</small>}<button onClick={onQuoteRemove} aria-label="移除引用"><X size={13} /></button></div>
+              <ExpandableQuote text={quote.text} compact />
+            </div>
+          )}
+          {quote && !value.trim() && (
+            <div className="quote-suggestions" aria-label="引用提问建议">
+              <button onClick={() => onChange("解释它的机制和关键假设")}>解释机制</button>
+              <button onClick={() => onChange("找出这段论证最强的漏洞")}>找出漏洞</button>
+            </div>
+          )}
+          <div className="composer-input-row">
+            <textarea
+              ref={inputRef}
+              value={value}
+              rows={1}
+              placeholder={quote ? "关于这段，想问什么？" : mode === "paper" ? "问这篇论文…" : "问论文，也可以问外部世界…"}
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  onSend();
+                }
+              }}
+            />
+            <button className="composer-send" onClick={onSend} disabled={!value.trim() || busy} aria-label="发送"><Send size={16} /></button>
+          </div>
+          <span className="composer-hint">Enter 发送 · Shift Enter 换行</span>
         </div>
       ) : (
         <button className="configure-inline" onClick={onSettings}><Settings size={15} /> 配置 AI 后开始交流</button>
@@ -1406,7 +1483,7 @@ function NotesPanel({ highlights, onPage, onDelete, onNote }: {
     <div className="panel-scroll notes-panel">
       <div className="eyebrow"><Highlighter size={13} /> YOUR MARGINS</div>
       <h2>{highlights.length ? `${highlights.length} 条划线` : "划线会留在页边"}</h2>
-      {!highlights.length && <p className="muted">在原文中选中文字，即可高亮、解释、翻译或发起 reviewer challenge。</p>}
+      {!highlights.length && <p className="muted">在原文中选中文字，即可划线、翻译，或引用后自由提问。</p>}
       {[...highlights].sort((a, b) => a.page - b.page).map((item) => (
         <article className={`note-card ${item.color}`} key={item.id}>
           <button className="note-page" onClick={() => onPage(item.page)}>p.{item.page}</button>
@@ -1423,19 +1500,19 @@ function NotesPanel({ highlights, onPage, onDelete, onNote }: {
   );
 }
 
-function SelectionPopover({ selection, onHighlight, onAction, onClose }: {
+function SelectionPopover({ selection, onHighlight, onAsk, onTranslate, onClose }: {
   selection: SelectionState;
   onHighlight: (color?: HighlightColor) => void;
-  onAction: (action: "explain" | "translate" | "challenge") => void;
+  onAsk: () => void;
+  onTranslate: () => void;
   onClose: () => void;
 }) {
   const [palette, setPalette] = useState(false);
   return (
     <div className="selection-popover" role="toolbar" aria-label="选中文字操作" style={{ top: selection.top, left: selection.left }}>
       <div className="selection-page">p.{selection.page}</div>
-      <button onClick={() => onAction("explain")}><Sparkles size={14} /> 解释</button>
-      <button onClick={() => onAction("translate")}><Languages size={14} /> 翻译</button>
-      <button onClick={() => onAction("challenge")}><ShieldQuestion size={14} /> 质疑</button>
+      <button onClick={onAsk}><MessageCircle size={14} /> 问这段</button>
+      <button onClick={onTranslate}><Languages size={14} /> 翻译</button>
       <div className="highlight-control">
         <button onClick={() => onHighlight()}><Highlighter size={14} /> 划线</button>
         <button className="palette-toggle" onClick={() => setPalette((value) => !value)}><ChevronDown size={12} /></button>
@@ -1449,6 +1526,19 @@ function SelectionPopover({ selection, onHighlight, onAction, onClose }: {
       </div>
       <button className="popover-close" onClick={onClose}><X size={13} /></button>
     </div>
+  );
+}
+
+function ExpandableQuote({ text, compact = false }: { text: string; compact?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const limit = compact ? 220 : 360;
+  const shortened = text.length > limit;
+  const visible = shortened && !expanded ? `${text.slice(0, limit).trimEnd()}…` : text;
+  return (
+    <blockquote className={`${compact ? "composer-quote-text" : "message-quote"} ${expanded ? "expanded" : ""}`}>
+      <span>{visible}</span>
+      {shortened && <button type="button" onClick={() => setExpanded((value) => !value)}>{expanded ? "收起" : "展开全文"}</button>}
+    </blockquote>
   );
 }
 
@@ -1607,6 +1697,11 @@ function fileNameFromUrl(value: string): string {
   } catch {
     return "Research paper";
   }
+}
+
+function closestPdfPage(node: Node): HTMLElement | null {
+  const element = node instanceof Element ? node : node.parentElement;
+  return element?.closest<HTMLElement>(".pdf-page") ?? null;
 }
 
 function preciseSelectionRects(range: Range, pageElement: HTMLElement): DOMRect[] {

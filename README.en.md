@@ -39,7 +39,7 @@ Lumen Paper replaces Chrome's default PDF page with a focused reading workspace 
 ## Features
 
 - **Paper Brief** — distills contributions, mechanisms, evidence, limitations, and a suggested reading path.
-- **Selection-aware chat and page citations** — explain, translate, or challenge a passage, then jump back to the referenced page.
+- **Selection-aware chat and page citations** — quote a passage and ask anything, or translate it directly, then jump back to the referenced page.
 - **Highlights and notes** — stored locally per paper without modifying the original PDF.
 - **Comfortable reading** — tune the sidebar, content width, type size, font, and Focus mode.
 - **Two AI backends** — connect any OpenAI-compatible API or use Codex CLI through the local Bridge.

@@ -24,6 +24,7 @@ export interface LumenSettings {
   researchSystemPrompt: string;
   summaryTemplate: string;
   chatTemplate: string;
+  quoteTemplate: string;
   explainTemplate: string;
   translateTemplate: string;
   challengeTemplate: string;
@@ -37,6 +38,7 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  prompt?: string;
   page?: number;
   quote?: string;
   toolActivity?: AgentToolActivity[];
@@ -127,6 +129,12 @@ export interface ModelOption {
   isDefault?: boolean;
 }
 
+export interface BridgeInfo {
+  version: string;
+  protocolVersion: number;
+  codex?: string;
+}
+
 export interface ModelListRequest {
   provider: ProviderKind;
   endpoint: string;
@@ -141,9 +149,21 @@ export interface ModelListResponse {
   error?: string;
 }
 
+export interface BridgeStatusRequest {
+  bridgeUrl: string;
+  bridgeToken: string;
+}
+
+export interface BridgeStatusResponse {
+  ok: boolean;
+  bridge?: BridgeInfo;
+  error?: string;
+}
+
 export type RuntimeMessage =
   | { type: "AI_REQUEST"; payload: AiRequest }
   | { type: "LIST_MODELS"; payload: ModelListRequest }
+  | { type: "BRIDGE_STATUS"; payload: BridgeStatusRequest }
   | { type: "OPEN_URL"; url?: string }
   | { type: "OPEN_OPTIONS" }
   | { type: "OPEN_NATIVE"; url: string };

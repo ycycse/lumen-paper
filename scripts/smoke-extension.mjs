@@ -67,6 +67,7 @@ const profileDir = mkdtempSync(`${tmpdir()}/lumen-chrome-`);
 const screenshotPath = resolve("work/smoke-reader.png");
 const focusScreenshotPath = resolve("work/smoke-focus-mode.png");
 const notesScreenshotPath = resolve("work/smoke-highlights.png");
+const quoteScreenshotPath = resolve("work/smoke-quote-composer.png");
 const smokeAnswer = [
   "## 核心判断",
   "",
@@ -98,6 +99,7 @@ const smokeAnswer = [
   "建议先读主结果表，再回到方法假设。[[p:1]]",
 ].join("\n");
 let lastApiOrigin = "";
+const apiRequestBodies = [];
 const bridgeRequestBodies = [];
 mkdirSync(resolve("work"), { recursive: true });
 
@@ -116,8 +118,14 @@ const pdfServer = createServer((request, response) => {
     response.end(pdfBytes);
   } else if (request.url === "/v1/chat/completions" && request.method === "POST") {
     lastApiOrigin = String(request.headers.origin || "");
-    response.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-    response.end(JSON.stringify({ choices: [{ message: { content: smokeAnswer } }] }));
+    void readJsonBody(request).then((body) => {
+      apiRequestBodies.push(body);
+      response.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      response.end(JSON.stringify({ choices: [{ message: { content: smokeAnswer } }] }));
+    }).catch((error) => {
+      response.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+    });
   } else if (request.url === "/v1/chat" && request.method === "POST") {
     void readJsonBody(request).then((body) => {
       bridgeRequestBodies.push(body);
@@ -414,6 +422,13 @@ try {
     return true;
   })()`);
   await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.selection-popover'))`)), 5_000, "selection toolbar");
+  metrics.snappedSelection = await cdp.evaluate(`(() => {
+    const selection = getSelection();
+    if (!selection?.rangeCount) return '';
+    window.__lumenSmokeSelectionRange = selection.getRangeAt(0).cloneRange();
+    return selection.toString().replace(/[\\s\\u200B\\uFEFF]+/gu, ' ').trim();
+  })()`);
+  if (!metrics.snappedSelection) throw new Error('Word-snapped selection was empty');
   await cdp.evaluate(`document.querySelector('.highlight-control > button')?.click()`);
   await waitFor(async () => Number(await cdp.evaluate(`document.querySelectorAll('.saved-highlight').length`)) > 0, 5_000, "saved highlight overlay");
   await waitFor(
@@ -654,6 +669,10 @@ try {
   await cdp.evaluate(`document.querySelectorAll('.note-card .delete-note')[1]?.click()`);
   await waitFor(async () => Number(await cdp.evaluate(`document.querySelectorAll('.note-card').length`)) === 1, 5_000, "remove narrow smoke highlight");
   metrics.notesTab = await cdp.evaluate(`document.querySelector('.notes-panel h2')?.textContent`);
+  metrics.savedHighlightText = await cdp.evaluate(`document.querySelector('.note-card blockquote')?.textContent`);
+  if (/discardnearly|agentthat/.test(metrics.savedHighlightText || '')) {
+    throw new Error(`PDF line-break whitespace was lost: ${metrics.savedHighlightText}`);
+  }
   await cdp.evaluate(`(() => {
     getSelection()?.removeAllRanges();
     document.querySelector('.selection-popover .popover-close')?.click();
@@ -667,7 +686,84 @@ try {
   const notesCapture = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   writeFileSync(notesScreenshotPath, Buffer.from(notesCapture.data, "base64"));
 
-  await cdp.evaluate(`document.querySelectorAll('.panel-tabs button')[1]?.click()`);
+  const quoteStarted = await cdp.evaluate(`(() => {
+    window.__lumenSmokeSelectQuote = () => {
+    const spans = [...document.querySelectorAll('.textLayer span')];
+    const startSpan = spans.find((candidate) => candidate.textContent?.includes('run, and discard'));
+    const startIndex = startSpan ? spans.indexOf(startSpan) : -1;
+    const endSpan = startIndex >= 0
+      ? spans.slice(startIndex + 1).find((candidate) => candidate.textContent?.includes('nearly all of them'))
+      : null;
+    const startNode = startSpan?.firstChild;
+    const endNode = endSpan?.firstChild;
+    if (!(startNode instanceof Text) || !(endNode instanceof Text)) return false;
+    const firstWordStart = startNode.data.indexOf('run');
+    const endPhrase = 'nearly all of them';
+    const lastWordEnd = endNode.data.indexOf(endPhrase) + endPhrase.length;
+    if (firstWordStart < 0 || lastWordEnd < endPhrase.length) return false;
+    const range = document.createRange();
+    range.setStart(startNode, firstWordStart + 1);
+    range.setEnd(endNode, lastWordEnd - 1);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    startSpan.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 420, clientY: 180 }));
+    return true;
+    };
+    return window.__lumenSmokeSelectQuote();
+  })()`);
+  if (!quoteStarted) throw new Error("Could not create quote selection");
+  await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.selection-popover'))`)), 5_000, "quote selection toolbar");
+  const apiCallsBeforeQuote = apiRequestBodies.length;
+  metrics.quoteExpected = 'run, and discard nearly all of them';
+  metrics.quoteNativeSelection = await cdp.evaluate(`getSelection()?.toString()`);
+  await cdp.evaluate(`[...document.querySelectorAll('.selection-popover button')].find((button) => button.textContent?.includes('问这段'))?.click()`);
+  await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.composer-quote'))`)), 5_000, "quote composer");
+  if (apiRequestBodies.length !== apiCallsBeforeQuote) throw new Error("Attaching a quote called AI before the reader sent a question");
+  const quoteComposer = await cdp.evaluate(`({
+    quote: document.querySelector('.composer-quote-text span')?.textContent,
+    placeholder: document.querySelector('.composer textarea')?.getAttribute('placeholder'),
+    suggestions: [...document.querySelectorAll('.quote-suggestions button')].map((button) => button.textContent)
+  })`);
+  if (quoteComposer.quote !== metrics.quoteExpected || !quoteComposer.placeholder?.includes('想问什么')) {
+    throw new Error(`Quote composer did not preserve the visible selection: ${JSON.stringify({ expected: metrics.quoteExpected, actual: quoteComposer })}`);
+  }
+  const quoteCapture = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  writeFileSync(quoteScreenshotPath, Buffer.from(quoteCapture.data, "base64"));
+  const customQuoteQuestion = '这个结论还需要什么额外实验？';
+  await cdp.evaluate(`(() => {
+    const textarea = document.querySelector('.composer textarea');
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (!textarea || !setter) return false;
+    setter.call(textarea, ${JSON.stringify(customQuoteQuestion)});
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await cdp.evaluate(`document.querySelector('[aria-label="移除引用"]')?.click()`);
+  await waitFor(async () => !(await cdp.evaluate(`Boolean(document.querySelector('.composer-quote'))`)), 5_000, "removed quote draft");
+  await cdp.evaluate(`window.__lumenSmokeSelectQuote?.()`);
+  await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.selection-popover'))`)), 5_000, "reselected quote with chat draft");
+  await cdp.evaluate(`[...document.querySelectorAll('.selection-popover button')].find((button) => button.textContent?.includes('问这段'))?.click()`);
+  await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.composer-quote'))`)), 5_000, "reattached quote with chat draft");
+  metrics.quoteAskPreservedDraft = await cdp.evaluate(`document.querySelector('.composer textarea')?.value`);
+  if (metrics.quoteAskPreservedDraft !== customQuoteQuestion) {
+    throw new Error(`Attaching a quote erased the unsent draft: ${JSON.stringify(metrics.quoteAskPreservedDraft)}`);
+  }
+  await cdp.evaluate(`document.querySelector('.composer-send')?.click()`);
+  await waitFor(() => apiRequestBodies.length === apiCallsBeforeQuote + 1, 5_000, "quoted custom question request");
+  await waitFor(async () => Number(await cdp.evaluate(`document.querySelectorAll('.message.assistant').length`)) >= 1, 5_000, "quoted custom answer");
+  const quoteRequestPrompt = apiRequestBodies.at(-1)?.messages?.at(-1)?.content || "";
+  metrics.quoteAsk = {
+    composer: quoteComposer,
+    customQuestion: customQuoteQuestion,
+    requestPreservedQuote: quoteRequestPrompt.includes(metrics.quoteExpected),
+    requestPreservedQuestion: quoteRequestPrompt.includes(customQuoteQuestion),
+    renderedQuote: await cdp.evaluate(`document.querySelector('.message.user .message-quote span')?.textContent`),
+  };
+  if (!metrics.quoteAsk.requestPreservedQuote || !metrics.quoteAsk.requestPreservedQuestion || metrics.quoteAsk.renderedQuote !== metrics.quoteExpected) {
+    throw new Error(`Quoted custom question lost context: ${JSON.stringify(metrics.quoteAsk)}`);
+  }
+
   await waitFor(async () => Boolean(await cdp.evaluate(`Boolean(document.querySelector('.composer textarea'))`)), 5_000, "chat composer");
   await cdp.evaluate(`(() => {
     const textarea = document.querySelector('.composer textarea');
@@ -842,7 +938,10 @@ try {
     throw new Error(`Agent workspace was not persisted: ${JSON.stringify(metrics.agentWorkspace)}`);
   }
   metrics.promptEditors = await optionsCdp.evaluate(`document.querySelectorAll('.prompt-editor').length`);
-  if (metrics.permissionModes.length !== 3 || metrics.promptEditors !== 10) {
+  metrics.hasQuotePrompt = await optionsCdp.evaluate(`[
+    ...document.querySelectorAll('.prompt-editor')
+  ].some((editor) => editor.textContent?.includes('引用提问 · User template'))`);
+  if (metrics.permissionModes.length !== 3 || metrics.promptEditors !== 9 || !metrics.hasQuotePrompt) {
     throw new Error(`Prompt Studio or permission modes missing: ${JSON.stringify({ modes: metrics.permissionModes, prompts: metrics.promptEditors })}`);
   }
   const optionsScreenshotPath = resolve("work/smoke-model-settings.png");
@@ -854,7 +953,7 @@ try {
   const promptStudioCapture = await optionsCdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   writeFileSync(promptStudioScreenshotPath, Buffer.from(promptStudioCapture.data, "base64"));
   optionsCdp.close();
-  process.stdout.write(`${JSON.stringify({ extensionId, pdf: basename(pdfPath), metrics, screenshotPath, focusScreenshotPath, notesScreenshotPath, optionsScreenshotPath, promptStudioScreenshotPath }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ extensionId, pdf: basename(pdfPath), metrics, screenshotPath, focusScreenshotPath, notesScreenshotPath, quoteScreenshotPath, optionsScreenshotPath, promptStudioScreenshotPath }, null, 2)}\n`);
   cdp.close();
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.stack : error}\n${chromeErrors.slice(-5000)}\n`);

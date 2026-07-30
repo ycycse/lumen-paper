@@ -7,20 +7,32 @@ import {
   DEFAULT_CONNECTION_TEST_PROMPT,
   DEFAULT_EXPLAIN_TEMPLATE,
   DEFAULT_PAPER_SYSTEM_PROMPT,
+  DEFAULT_QUOTE_TEMPLATE,
   DEFAULT_RESEARCH_SYSTEM_PROMPT,
   DEFAULT_SUMMARY_INSTRUCTIONS,
   DEFAULT_SUMMARY_TEMPLATE,
   DEFAULT_TRANSLATE_TEMPLATE,
 } from "../lib/prompts";
 import { DEFAULT_SETTINGS, getSettings, saveSettings } from "../lib/storage";
-import type { AiResponse, LumenSettings, ModelListResponse, ModelOption, ProviderKind } from "../types";
+import type { AiResponse, BridgeInfo, BridgeStatusResponse, LumenSettings, ModelListResponse, ModelOption, ProviderKind } from "../types";
 
 type TestState = "idle" | "testing" | "ok" | "error";
 type CatalogState = "idle" | "loading" | "ok" | "error";
+type Catalog = {
+  provider?: ProviderKind;
+  sourceRevision?: number;
+  state: CatalogState;
+  models: ModelOption[];
+  bridge?: BridgeInfo;
+  error: string;
+};
 const BRIDGE_INSTALL_COMMAND = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/ycycse/lumen-paper/releases/latest/download/install-lumen-paper-bridge.sh | bash";
+
+const EMPTY_CATALOG: Catalog = { state: "idle", models: [], error: "" };
 
 export function OptionsApp() {
   const [settings, setSettings] = useState<LumenSettings>(DEFAULT_SETTINGS);
+  const settingsRef = useRef<LumenSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -28,14 +40,22 @@ export function OptionsApp() {
   const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
   const [testState, setTestState] = useState<TestState>("idle");
   const [testMessage, setTestMessage] = useState("");
-  const [catalog, setCatalog] = useState<{ provider?: ProviderKind; state: CatalogState; models: ModelOption[]; error: string }>({
-    state: "idle",
-    models: [],
-    error: "",
-  });
+  const [catalog, setCatalog] = useState<Catalog>(EMPTY_CATALOG);
+  const catalogRef = useRef<Catalog>(EMPTY_CATALOG);
+  const modelSourceRevisionRef = useRef(0);
+  const catalogRequestRef = useRef(0);
+  const bridgeStatusRequestRef = useRef(0);
+  const bridgeStatusInFlightRef = useRef<{ sourceRevision: number; requestId: number } | null>(null);
+  const connectionTestRef = useRef(0);
+
+  const updateCatalog = (next: Catalog) => {
+    catalogRef.current = next;
+    setCatalog(next);
+  };
 
   useEffect(() => {
     void getSettings().then((value) => {
+      settingsRef.current = value;
       setSettings(value);
       setFullAccessConfirmed(value.codexPermissionMode === "unrestricted");
       setLoaded(true);
@@ -43,44 +63,98 @@ export function OptionsApp() {
   }, []);
 
   const patch = <K extends keyof LumenSettings>(key: K, value: LumenSettings[K]) => {
-    setSettings((current) => ({ ...current, [key]: value }));
+    const next = { ...settingsRef.current, [key]: value };
+    settingsRef.current = next;
+    setSettings(next);
     if (["provider", "endpoint", "apiKey", "bridgeUrl", "bridgeToken"].includes(key)) {
-      setCatalog({ state: "idle", models: [], error: "" });
+      modelSourceRevisionRef.current += 1;
+      catalogRequestRef.current += 1;
+      bridgeStatusRequestRef.current += 1;
+      bridgeStatusInFlightRef.current = null;
+      updateCatalog({ ...EMPTY_CATALOG, sourceRevision: modelSourceRevisionRef.current });
     }
+    connectionTestRef.current += 1;
     setSaved(false);
     setTestState("idle");
   };
 
-  const loadModels = async (force = false) => {
-    if (catalog.state === "loading") return;
-    if (!force && catalog.provider === settings.provider && catalog.state === "ok") return;
-    const provider = settings.provider;
-    setCatalog({ provider, state: "loading", models: [], error: "" });
+  const loadBridgeStatus = async (
+    source = settingsRef.current,
+    sourceRevision = modelSourceRevisionRef.current,
+  ) => {
+    if (source.provider !== "codex") return;
+    if (bridgeStatusInFlightRef.current?.sourceRevision === sourceRevision) return;
+    const requestId = ++bridgeStatusRequestRef.current;
+    bridgeStatusInFlightRef.current = { sourceRevision, requestId };
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "BRIDGE_STATUS",
+        payload: { bridgeUrl: source.bridgeUrl, bridgeToken: source.bridgeToken },
+      }) as BridgeStatusResponse;
+      if (
+        requestId !== bridgeStatusRequestRef.current
+        || sourceRevision !== modelSourceRevisionRef.current
+        || !response.ok
+        || !response.bridge
+      ) return;
+      const current = catalogRef.current;
+      if (current.provider !== "codex" || current.sourceRevision !== sourceRevision) return;
+      updateCatalog({ ...current, bridge: response.bridge });
+    } catch {
+      // Version metadata is auxiliary; model discovery owns the visible error state.
+    } finally {
+      if (bridgeStatusInFlightRef.current?.requestId === requestId) bridgeStatusInFlightRef.current = null;
+    }
+  };
+
+  const loadModels = async (
+    force = false,
+    source = settingsRef.current,
+    sourceRevision = modelSourceRevisionRef.current,
+  ) => {
+    const current = catalogRef.current;
+    if (!force && current.sourceRevision === sourceRevision && current.state === "loading") {
+      if (source.provider === "codex" && !current.bridge) void loadBridgeStatus(source, sourceRevision);
+      return;
+    }
+    if (!force && current.sourceRevision === sourceRevision && current.provider === source.provider && current.state === "ok") {
+      if (source.provider === "codex" && !current.bridge) void loadBridgeStatus(source, sourceRevision);
+      return;
+    }
+    const requestId = ++catalogRequestRef.current;
+    const provider = source.provider;
+    const bridge = current.sourceRevision === sourceRevision ? current.bridge : undefined;
+    updateCatalog({ provider, sourceRevision, state: "loading", models: [], bridge, error: "" });
+    if (provider === "codex") void loadBridgeStatus(source, sourceRevision);
     try {
       const response = await chrome.runtime.sendMessage({
         type: "LIST_MODELS",
         payload: {
           provider,
-          endpoint: settings.endpoint,
-          apiKey: settings.apiKey,
-          bridgeUrl: settings.bridgeUrl,
-          bridgeToken: settings.bridgeToken,
+          endpoint: source.endpoint,
+          apiKey: source.apiKey,
+          bridgeUrl: source.bridgeUrl,
+          bridgeToken: source.bridgeToken,
         },
       }) as ModelListResponse;
+      if (requestId !== catalogRequestRef.current || sourceRevision !== modelSourceRevisionRef.current) return;
       if (!response.ok || !response.models?.length) throw new Error(response.error || "没有可用模型");
-      setCatalog({ provider, state: "ok", models: response.models, error: "" });
+      updateCatalog({ provider, sourceRevision, state: "ok", models: response.models, bridge: catalogRef.current.bridge, error: "" });
     } catch (cause) {
-      setCatalog({
+      if (requestId !== catalogRequestRef.current || sourceRevision !== modelSourceRevisionRef.current) return;
+      updateCatalog({
         provider,
+        sourceRevision,
         state: "error",
         models: [],
+        bridge: catalogRef.current.bridge,
         error: cause instanceof Error ? cause.message : String(cause),
       });
     }
   };
 
   const persist = async () => {
-    await saveSettings(settings);
+    await saveSettings(settingsRef.current);
     const mimeHandler = (chrome as typeof chrome & {
       mimeHandler?: {
         setMimeHandlerOptions: (mimeType: string, options: { enabled: boolean }) => Promise<void>;
@@ -94,40 +168,55 @@ export function OptionsApp() {
   };
 
   const resetPrompts = () => {
-    setSettings((current) => ({
-      ...current,
+    const next = {
+      ...settingsRef.current,
       summaryPrompt: DEFAULT_SUMMARY_INSTRUCTIONS,
       paperSystemPrompt: DEFAULT_PAPER_SYSTEM_PROMPT,
       researchSystemPrompt: DEFAULT_RESEARCH_SYSTEM_PROMPT,
       summaryTemplate: DEFAULT_SUMMARY_TEMPLATE,
       chatTemplate: DEFAULT_CHAT_TEMPLATE,
+      quoteTemplate: DEFAULT_QUOTE_TEMPLATE,
       explainTemplate: DEFAULT_EXPLAIN_TEMPLATE,
       translateTemplate: DEFAULT_TRANSLATE_TEMPLATE,
       challengeTemplate: DEFAULT_CHALLENGE_TEMPLATE,
       codexRuntimePrompt: DEFAULT_CODEX_RUNTIME_PROMPT,
       connectionTestPrompt: DEFAULT_CONNECTION_TEST_PROMPT,
-    }));
+    };
+    settingsRef.current = next;
+    setSettings(next);
+    connectionTestRef.current += 1;
+    setTestState("idle");
     setSaved(false);
   };
 
   const testConnection = async () => {
-    await saveSettings(settings);
+    const source = settingsRef.current;
+    const sourceRevision = modelSourceRevisionRef.current;
+    const testId = ++connectionTestRef.current;
+    catalogRequestRef.current += 1;
+    bridgeStatusRequestRef.current += 1;
+    bridgeStatusInFlightRef.current = null;
+    updateCatalog({ provider: source.provider, sourceRevision, state: "idle", models: [], error: "" });
     setTestState("testing");
     setTestMessage("");
     try {
+      await saveSettings(source);
       const response = await chrome.runtime.sendMessage({
         type: "AI_REQUEST",
         payload: {
           system: "",
           purpose: "chat",
-          messages: [{ role: "user", content: settings.connectionTestPrompt }],
+          messages: [{ role: "user", content: source.connectionTestPrompt }],
           temperature: 0,
         },
       }) as AiResponse;
+      if (testId !== connectionTestRef.current || sourceRevision !== modelSourceRevisionRef.current) return;
       if (!response.ok) throw new Error(response.error || "连接失败");
       setTestState("ok");
       setTestMessage(response.content || "连接成功");
+      await loadModels(true, source, sourceRevision);
     } catch (cause) {
+      if (testId !== connectionTestRef.current || sourceRevision !== modelSourceRevisionRef.current) return;
       setTestState("error");
       setTestMessage(cause instanceof Error ? cause.message : String(cause));
     }
@@ -258,6 +347,7 @@ export function OptionsApp() {
                   models={catalog.provider === "codex" ? catalog.models : []}
                   state={catalog.provider === "codex" ? catalog.state : "idle"}
                   error={catalog.provider === "codex" ? catalog.error : ""}
+                  bridge={catalog.provider === "codex" ? catalog.bridge : undefined}
                   allowDefault
                   onChange={(value) => patch("codexSummaryModel", value)}
                   onOpen={() => void loadModels()}
@@ -271,6 +361,7 @@ export function OptionsApp() {
                   models={catalog.provider === "codex" ? catalog.models : []}
                   state={catalog.provider === "codex" ? catalog.state : "idle"}
                   error={catalog.provider === "codex" ? catalog.error : ""}
+                  bridge={catalog.provider === "codex" ? catalog.bridge : undefined}
                   allowDefault
                   onChange={(value) => patch("codexChatModel", value)}
                   onOpen={() => void loadModels()}
@@ -440,11 +531,11 @@ export function OptionsApp() {
           onChange={(value) => patch("chatTemplate", value)}
         />
         <PromptEditor
-          title="划线 · 解释 template"
-          description="可用变量：{{selection}}、{{page}}、{{page_context}}。"
-          value={settings.explainTemplate}
-          defaultValue={DEFAULT_EXPLAIN_TEMPLATE}
-          onChange={(value) => patch("explainTemplate", value)}
+          title="引用提问 · User template"
+          description="可用变量：{{question}}、{{selection}}、{{page}}、{{page_context}}。"
+          value={settings.quoteTemplate}
+          defaultValue={DEFAULT_QUOTE_TEMPLATE}
+          onChange={(value) => patch("quoteTemplate", value)}
         />
         <PromptEditor
           title="划线 · 翻译 template"
@@ -452,13 +543,6 @@ export function OptionsApp() {
           value={settings.translateTemplate}
           defaultValue={DEFAULT_TRANSLATE_TEMPLATE}
           onChange={(value) => patch("translateTemplate", value)}
-        />
-        <PromptEditor
-          title="划线 · Reviewer challenge template"
-          description="可用变量：{{selection}}、{{page}}、{{page_context}}。"
-          value={settings.challengeTemplate}
-          defaultValue={DEFAULT_CHALLENGE_TEMPLATE}
-          onChange={(value) => patch("challengeTemplate", value)}
         />
         <PromptEditor
           title="Codex runtime prompt"
@@ -557,12 +641,13 @@ function Field({ label, span = false, children }: { label: string; span?: boolea
   return <label className={`field ${span ? "span" : ""}`}><span>{label}</span>{children}</label>;
 }
 
-function ModelPicker({ value, placeholder, models, state, error, allowDefault = false, onChange, onOpen, onRefresh }: {
+function ModelPicker({ value, placeholder, models, state, error, bridge, allowDefault = false, onChange, onOpen, onRefresh }: {
   value: string;
   placeholder: string;
   models: ModelOption[];
   state: CatalogState;
   error: string;
+  bridge?: BridgeInfo;
   allowDefault?: boolean;
   onChange: (value: string) => void;
   onOpen: () => void;
@@ -621,7 +706,7 @@ function ModelPicker({ value, placeholder, models, state, error, allowDefault = 
       {open && (
         <div className="model-menu" role="listbox">
           <div className="model-menu-heading">
-            <span>{state === "loading" ? "正在读取可用模型…" : `${models.length} 个可选模型`}</span>
+            <span>{state === "loading" ? "正在读取可用模型…" : `${models.length} 个可选模型${bridge ? ` · Bridge v${bridge.version}` : ""}`}</span>
             <button type="button" onClick={onRefresh} title="重新读取"><RefreshCw size={12} /></button>
           </div>
           {state === "error" && (

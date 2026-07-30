@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Lumen Paper — AI Paper Reader",
   "short_name": "Lumen",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx912WHJ9aWoMAVVOnXpIPDLbkWEAdbYHI9VnzGQ06pqwjalWz/o9Fq/3U/Gk7rF6OxW4z8gYS3YZa2Hadao0We1u1/Ok1raf6hDevuIzaZaNXNo2Y+ZOjFQm0ufPbO56q/GEqFknOVDTv/iNULOb+aVrLyYEPz6NwBz7jUHaWKiQVcmY7kMdkt5aBdZHbMKYcCZgJLdUGrDyDSVdqOwQNLmKU8SL0mtleKITwL2oxXOZGW9fPrqoRetQF1zjVtRLPPo+bbRI+HZzpbPTCKlUsxXmtt5PE5yELi9Dav5MPO95Vi5NtDOiT8pMEP67TF8f0+JrT0XMPbaDTGWKdlTFfQIDAQAB",
   "description": "A calm AI reading layer for research PDFs, with anchored highlights, summaries and BYO API or Codex Plan.",
   "permissions": [

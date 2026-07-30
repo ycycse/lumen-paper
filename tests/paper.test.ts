@@ -10,8 +10,10 @@ import {
 } from "../src/lib/paper";
 import {
   DEFAULT_CHAT_TEMPLATE,
+  DEFAULT_QUOTE_TEMPLATE,
   DEFAULT_SUMMARY_TEMPLATE,
   chatPrompt,
+  quotedSelectionPrompt,
   renderPromptTemplate,
   summaryPrompt,
 } from "../src/lib/prompts";
@@ -85,6 +87,30 @@ describe("paper text helpers", () => {
     expect(hasRelevantPaperContext("Kimi K3 最近有什么变化？", pages)).toBe(false);
     const messages = chatPrompt("Kimi K3 最近有什么变化？", [], [], DEFAULT_CHAT_TEMPLATE);
     expect(messages[0].content).toContain("No paper excerpts attached");
+  });
+
+  it("keeps the exact quoted passage and the reader's own question together", () => {
+    const prompt = quotedSelectionPrompt(
+      "这个结论需要什么额外实验？",
+      9,
+      "following the Moonlight [62] architecture",
+      "Surrounding page text",
+      DEFAULT_QUOTE_TEMPLATE,
+    );
+    expect(prompt).toContain("这个结论需要什么额外实验？");
+    expect(prompt).toContain("<selection>following the Moonlight [62] architecture</selection>");
+    expect(prompt).toContain("page 9");
+  });
+
+  it("reuses the full rendered quote prompt in later conversation turns", () => {
+    const messages = chatPrompt("继续", [], [{
+      id: "quoted-turn",
+      role: "user",
+      content: "它可信吗？",
+      prompt: "FULL QUOTE PROMPT",
+      createdAt: 1,
+    }], DEFAULT_CHAT_TEMPLATE);
+    expect(messages[0]).toEqual({ role: "user", content: "FULL QUOTE PROMPT" });
   });
 
   it("preserves the source page favicon without leaking a previous site's icon", () => {

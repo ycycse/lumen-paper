@@ -1,4 +1,4 @@
-import type { AiRequest, AiResponse, ModelListRequest, ModelListResponse, RuntimeMessage } from "./types";
+import type { AiRequest, AiResponse, BridgeInfo, BridgeStatusRequest, BridgeStatusResponse, ModelListRequest, ModelListResponse, RuntimeMessage } from "./types";
 import { DEFAULT_SETTINGS, getSettings, SETTINGS_KEY } from "./lib/storage";
 import { sourceFaviconUrl } from "./lib/favicon";
 import { modelsEndpoint, normalizeModelOptions } from "./lib/models";
@@ -53,6 +53,8 @@ async function handleMessage(message: RuntimeMessage, sender: chrome.runtime.Mes
       return callAi(message.payload);
     case "LIST_MODELS":
       return listModels(message.payload);
+    case "BRIDGE_STATUS":
+      return readBridgeStatus(message.payload);
     case "OPEN_URL":
       await openInLumen(sender.tab?.id, message.url ?? sender.tab?.url);
       return { ok: true };
@@ -256,8 +258,10 @@ async function listCodexModels(request: ModelListRequest): Promise<ModelListResp
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
   try {
-    const response = await fetch(`${request.bridgeUrl.replace(/\/$/, "")}/v1/models`, {
-      headers: { "X-Lumen-Token": request.bridgeToken },
+    const baseUrl = request.bridgeUrl.replace(/\/$/, "");
+    const headers = { "X-Lumen-Token": request.bridgeToken };
+    const response = await fetch(`${baseUrl}/v1/models`, {
+      headers,
       signal: controller.signal,
     });
     const data = await response.json().catch(() => ({}));
@@ -274,6 +278,42 @@ async function listCodexModels(request: ModelListRequest): Promise<ModelListResp
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function readBridgeStatus(request: BridgeStatusRequest): Promise<BridgeStatusResponse> {
+  if (!request.bridgeUrl || !request.bridgeToken) {
+    return { ok: false, error: "请先启动 Bridge 并填写 pairing token。" };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(`${request.bridgeUrl.replace(/\/$/, "")}/health`, {
+      headers: { "X-Lumen-Token": request.bridgeToken },
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      const rawError = String(data.error || "");
+      return { ok: false, error: bridgeResponseError(response.status, rawError) || `Bridge ${response.status}` };
+    }
+    const bridge = normalizeBridgeInfo(data);
+    return bridge ? { ok: true, bridge } : { ok: false, error: "Bridge 没有返回有效版本信息。" };
+  } catch (error) {
+    return { ok: false, error: `无法读取 Bridge 状态：${humanError(error)}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeBridgeInfo(value: unknown): BridgeInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as { version?: unknown; protocolVersion?: unknown; codex?: unknown };
+  if (typeof candidate.version !== "string" || !Number.isInteger(candidate.protocolVersion)) return undefined;
+  return {
+    version: candidate.version,
+    protocolVersion: candidate.protocolVersion as number,
+    codex: typeof candidate.codex === "string" ? candidate.codex : undefined,
+  };
 }
 
 function bridgeResponseError(status: number, rawError: string): string {
